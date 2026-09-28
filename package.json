@@ -1,0 +1,14 @@
+{
+  "name": "aloware-ai-hubspot-scheduling",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "HubSpot workflow custom code actions that let an Aloware AloAI agent book appointments into HubSpot Meetings. Node 20, matching the custom code action runtime. type=commonjs so the action files load locally the way HubSpot loads them.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node test/booking-action.test.mjs && node test/refresh-slots-action.test.mjs",
+    "demo": "node examples/demo.mjs"
+  }
+}

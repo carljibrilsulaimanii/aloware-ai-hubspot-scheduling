@@ -1,0 +1,14 @@
+# .gitignore -- Aloware AI -> HubSpot scheduling guide
+# Author: Jibril Sulaiman · Created: 2026-09-28
+# Why: this repo is public-safe by design. Keep real keys, probe output and
+# portal exports out of history -- once pushed, a secret is compromised.
+
+node_modules/
+.env
+.env.*
+*.token
+*secret*.json
+probe-output*.txt
+*.log
+.DS_Store
+Thumbs.db
