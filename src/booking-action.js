@@ -47,8 +47,9 @@
  *     accepts any of several write scopes; contacts write is the apt one, since
  *     booking creates or updates the contact.
  *
- * Input fields to map from the webhook payload (map every one as String):
- *   first_name, last_name, email,
+ * Input fields (map every one as String; README Step 8c has the full table):
+ *   first_name        from the webhook payload
+ *   last_name, email  from the enrolled contact record
  *   phone             the contact record's Phone Number property
  *   phone_agent       optional fallback: a number the agent captured, used only
  *                     when the contact record has none
