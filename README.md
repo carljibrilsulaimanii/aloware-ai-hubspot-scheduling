@@ -153,7 +153,9 @@ an integration that has to write meeting types back into HubSpot.
 | **HubSpot Data Hub Professional** or higher (formerly Operations Hub) | Custom code actions and "When a webhook is received" triggers both need it. Sales Hub or Service Hub Enterprise seats *don't* prove you have it. Step 1 shows how to check. |
 | **HubSpot Sales Hub** with Meetings | Needed for a round-robin scheduling page |
 | **HubSpot super admin**, or permission to edit workflows, properties and service keys | Needed to create the pieces below |
-| **Aloware** with **AloAI agents** and **Custom Functions** | The agent reaches HubSpot through a Custom Function |
+| **Aloware** with **AloAi Agents** (a *Pro* feature in Aloware's menu) | The agent reaches HubSpot through a Custom Function |
+| **An approved 10DLC campaign** on the Aloware line (for SMS) | Until it's approved, Aloware blocks outbound SMS. The text agent's replies fail with *"Messaging is disabled for this line"*, and a yellow banner shows at the top of Aloware. Voice agents don't need it. |
+| **HubSpot Sales Hub** seat tier that allows another scheduling page | A free tier gets one booking page. A second one shows *"You've used your 1 free booking page"* and an upgrade prompt. |
 | The **Aloware ↔ HubSpot integration** installed | This syncs contacts, and it adds Aloware's actions to HubSpot workflows |
 | **Connected calendars** for every rep in the round-robin pool | A disconnected calendar makes bookings silently vanish. See [section 8](#8-hubspot-behavior-the-docs-wont-tell-you). |
 | **Node.js 20** on your computer | Optional. Only needed to run the tests and demo locally. |
@@ -192,8 +194,13 @@ Do the steps in order. Each one ends with a ✅ **check**, and you shouldn't mov
 on until it passes. Most failures in this build are silent (HTTP 200 with nothing
 booked), so the checks are the only way you'll see them.
 
-> HubSpot menus move occasionally. If a path below doesn't match your portal,
-> search for the named setting with the search bar at the top of HubSpot.
+> **About the labels:** screen names and button labels in quotes below were
+> checked against screenshots of the live HubSpot and Aloware apps taken in
+> August 2026. A few steps weren't captured on screen, and those describe what
+> to look for rather than quoting a label: the workflow **Branch** action, the
+> Aloware actions inside HubSpot workflows, and the exact menu that opens
+> HubSpot's call and meeting types panel. Both vendors move menus
+> occasionally. If a path doesn't match, search for the setting by name.
 
 ### Step 1: Check your HubSpot and Aloware plans
 
@@ -208,16 +215,27 @@ booked), so the checks are the only way you'll see them.
 ✅ **Check:** **Custom code** is listed. If it isn't, your portal doesn't have
 Data Hub Professional, and nothing in this guide will work.
 
-**1b. Aloware has Custom Functions.**
-1. In Aloware, go to **AloAi Agents** and open an agent, or create a blank one.
-2. Look for the **Custom Functions** tab.
+**1b. Aloware can create the agent type you want, with custom functions.**
+1. In Aloware's left menu, click **AloAi Agents** (it has a *Pro* badge), then
+   **+ New Agent**.
+2. The modal **"Choose your AloAi Agent type:"** offers two cards:
+   - **Text:** *"This agent can be used to handle marketing campaigns, sales &
+     support over text."*
+   - **Voice:** *"This agent can be used to handle inbound and missed calls for
+     different use cases."*
+3. Pick one. The **Create agent** modal then asks for a direction, **Inbound** or
+   **Outbound**. If outbound voice isn't on your plan, it reads *"Outbound voice
+   agents are disabled for this company. Please contact Aloware support."*
 
-✅ **Check:** the tab exists and **+ Add Function** is clickable.
+✅ **Check:** the type you need can be created. Custom functions live in a
+different place on each type:
+- **Text agents** have a **Custom Functions** tab in the agent's left menu
+  (Configure, Instructions, Context, Schedule, Actions, **Custom Functions**).
+- **Voice agents** have no such tab. Functions live in the right-hand
+  **Functions** panel, under **+ Add**.
 
-While you're in Aloware, also check which agent types you can create: **Text**,
-**Voice → Inbound** and **Voice → Outbound**. Some accounts have text or outbound
-voice disabled. The HubSpot side doesn't care which type calls it, but you should
-know before planning an SMS bot.
+The HubSpot side doesn't care which type calls it. Just know which one you're
+building before Step 10.
 
 > **No Custom Functions?** You can still do this more slowly. Have the agent use
 > *Update Contact Field* to write a property that syncs to HubSpot, and trigger
@@ -231,15 +249,16 @@ This is the label every bot booking will carry. It's what your reports and deal
 automation will key on.
 
 1. Click the **Settings** gear (top right).
-2. Go to **Objects → Activities**, then open the **Call and meeting types** tab.
-   *In some portals this is under* **Data Management → Properties → Meeting
-   properties → "Call and meeting type"**.
-3. Click **Add type** (or **Add an option**) and name it, for example,
-   **`AI Booked Call`**.
-4. Save.
+2. In the left menu, under **Data Management**, go to **Objects → Activities**,
+   and open the call and meeting types settings. *If you can't find it, type
+   "call and meeting types" in the settings search box.*
+3. The side panel **"Edit call and meeting types"** opens, with a list of types
+   you can drag to reorder and a trash icon on each.
+4. Click **+Add type** and name it, for example, **`AI Booked Call`**.
+5. Save.
 
 ✅ **Check:** the new type appears in the list. The internal property behind it
-is `hs_activity_type`.
+is `hs_activity_type`, labelled *Call and meeting type* on meeting records.
 
 > Don't reuse a call-direction property (inbound or outbound) for this. A booked
 > meeting isn't a call in either direction.
@@ -251,30 +270,43 @@ is `hs_activity_type`.
 **3a. Create the scheduling page.**
 1. Go to **Sales → Meetings**. *In newer navigation this is* **Library →
    Meetings**.
-2. Click **Create scheduling page → Round robin**.
-3. Give it an internal name, for example `AI Booked Call`. The name doesn't
-   affect attribution.
+2. Create a new scheduling page and choose **Round robin**. The wizard header
+   reads **"Create round robin"**, *Step 1 of 4*.
 
-**3b. Overview step.**
+The wizard, and later the saved page, has four tabs: **Overview → Team members →
+Scheduling → Automation**.
 
-| Setting | Set it to | Why |
+**3b. Overview tab.** The fields appear in this order:
+
+| Field | Set it to | Why |
 |---|---|---|
-| **Meeting type** | `AI Booked Call` (from Step 2) | **This is all the attribution there is.** Every booking through this link, including API bookings, gets this type. |
-| **Location** | Phone Call, or whatever your reps actually use | It's stamped on `hs_meeting_location` |
-| **Videoconference link** | **Remove it** unless you want video | Otherwise API bookings get a Google Meet or Zoom URL even for a phone call |
-| **Cancel / reschedule links** | Leave **on** | Contacts can change the booking themselves |
+| **Internal name** | e.g. `AI Booked Call` | Only for you. It doesn't affect attribution. |
+| **Marketing campaigns** | Optional | |
+| **Organizer** | The owner of the page | |
+| **Event title** | e.g. `Call with {{company}}`. Use **Personalize** for tokens. | This is what shows on calendars |
+| **Location** | `Phone Call`, or whatever your reps actually use | It's stamped on `hs_meeting_location` |
+| **Add videoconference link** | **Click Remove** unless you want video | Otherwise API bookings get a Google Meet or Zoom URL even for a phone call |
+| **Cancel and reschedule** | Leave **on**: *"Include cancel and reschedule links in the event description"* | Contacts can change the booking themselves |
+| **Description** | Optional | |
+| **Meeting type** (the dropdown at the bottom) | `AI Booked Call` (from Step 2) | **This is all the attribution there is.** Every booking through this link, including API bookings, gets this type. |
 
-**3c. Team members step.** Add the reps who should take these calls. Choose them
-deliberately rather than adding everyone.
+**3c. Team members tab.**
+1. Click to edit the members. The panel **"Edit round robin members"** opens.
+2. Under **Round robin member setup**, choose **Select users** (or **Use a
+   rotation**).
+3. Pick the reps in **Users**, then click **Confirm**. Choose them deliberately
+   rather than adding everyone.
+
+✅ **Check:** every member in the **NAME** list reads **"Calendar connected"**.
 
 > ⚠️ **Every rep in the pool needs a connected calendar.** If a rep's calendar is
 > disconnected, HubSpot treats them as free at every hour of every day. Any
 > booking the round robin gives them returns **HTTP 200 and creates nothing**: no
-> meeting and no calendar event. Step 5 checks every rep for this.
+> meeting and no calendar event. Step 5 checks every rep again from the API side.
 
-**3d. Scheduling step.** HubSpot enforces all of these *before* the code ever
-sees a slot, so set them properly here. There's nothing matching to configure in
-the code.
+**3d. Scheduling tab.** HubSpot enforces all of these *before* the code ever sees
+a slot, so set them properly here. There's nothing matching to configure in the
+code.
 
 | Setting | Recommendation |
 |---|---|
@@ -286,18 +318,29 @@ the code.
 | **Start time increment** | For example, 15 or 30 minutes |
 | **Prioritize contact owner** | **Decide this deliberately.** When it's on, a contact who already has an owner goes to that owner instead of the round robin. |
 
-**3e. Form step.** Note every **required** field. Every one of them must be sent
-in the API request, or HubSpot rejects the booking.
+**3e. Form questions.** The booking form's questions are set with **Add contact
+property** (a *"Select a contact property"* dropdown), next to a **Block free
+email domains** toggle. Depending on your portal, this sits on the Scheduling or
+Automation tab. Note every **required** question. Each one must be sent in the
+API request, or HubSpot rejects the booking.
 
 - First name, last name and email are always sent. You don't need to do anything
   for those.
-- If the form requires **phone**, you'll switch that on in Step 6.
-- Every other required field is something the bot has to collect. Add nothing it
-  can't reliably get in a text conversation.
+- If the form requires **Phone number**, you'll switch that on in Step 6.
+- Leave **Block free email domains off.** Many leads text from Gmail or Yahoo
+  addresses.
+- Every other required question is something the bot has to collect. Add nothing
+  it can't reliably get in a text conversation.
 
-**3f. Privacy and consent.** If you turn on a consent checkbox, keep it
-**optional** unless you have a reason not to. If consent is *required*, the bot
-must capture a real yes or no for each consent type (see Step 8).
+**3f. Data privacy.** If your portal adds a **Data privacy** consent checkbox to
+the booking page, keep it **optional** unless you have a reason not to. If
+consent is *required*, the bot must capture a real yes or no for each consent
+type (see Step 8).
+
+The **public booking page** has two steps, *CHOOSE TIME → YOUR INFO*. The second
+step lists the required fields, like First name \*, Last name \*, Your email
+address \* and Phone number \*. It's a quick way to see what the API will
+require.
 
 **3g. Save and copy the slug.** Save the page and copy its URL. The **slug** is
 everything after `meetings.hubspot.com/`:
@@ -318,9 +361,10 @@ the assigned rep's calendar. Delete the test meeting afterwards.
 
 *About 5 minutes.*
 
-1. Go to **Settings → Integrations → Service Keys → Create service key**.
-   *Older portals call this* **Private Apps → Create a private app**.
-2. Name it `AI Booking Bridge`.
+1. Go to **Settings**. In the left menu, under **Account Management**, expand
+   **Integrations** and click **Service Keys**. *Older portals call these*
+   **Private Apps**.
+2. Create a new service key and name it `AI Booking Bridge`.
 3. Add exactly these scopes:
 
    | Scope | Why |
@@ -328,10 +372,15 @@ the assigned rep's calendar. Delete the test meeting afterwards.
    | `scheduler.meetings.meeting-link.read` | Read the link, its form and its availability |
    | `crm.objects.contacts.write` | **Required to book.** Booking creates or updates the contact. |
 
-4. Create the key, then click **Show → Copy**. The key starts with `pat-`.
+4. Save. On the key's page, find the **Service Key** box (*"Used to make API
+   calls."*) and click **Show**, then **Copy**. The key starts with `pat-`.
+   The same page has **Rotate** (issue a new key), **View Logs**, **Edit** (to
+   change scopes later) and **Delete this Service Key**.
 
 > ⚠️ **Read-only is not enough.** With only the read scope, the book endpoint
 > returns **403**. That looks like a broken API, but it's only a missing scope.
+> If you already made a read-only key, click **Edit** on it and add the write
+> scope. You don't need a new key.
 
 ✅ **Check:** you have the full key copied (roughly 45 characters, starting with
 `pat-`). Keep it out of chat messages, email and Aloware. It only goes into
@@ -442,13 +491,22 @@ If probe section 1 showed only `/v3/` answering, also change `SCHEDULER` to
 2. Choose **Contact-based**, and name it `AI Booking — Book Meeting`.
 
 **7b. Set the trigger.**
-1. Click **Set up triggers**.
-2. Choose **When a webhook is received**.
-3. HubSpot shows a **webhook URL** and waits for a sample event.
+1. Click the trigger card, which reads *"Trigger enrollment for contacts"*.
+2. Choose **When a webhook is received**, and create a new webhook event. A
+   four-step wizard titled **"Create a webhook event"** opens: **Name → Connect →
+   Map → Match**.
+3. **Name:** e.g. `AI booking request`. Later, this name labels the webhook's
+   fields in HubSpot's data-token picker.
+4. **Connect:** the heading reads *"Send a test event to connect your webhook"*.
+   Under **Webhook URL**, click **Copy**. The URL looks like this:
+   ```
+   https://api.hubapi.com/automation/v4/webhook-triggers/<portal id>/<webhook id>
+   ```
+   HubSpot shows *"Waiting for the test event"* until one arrives.
 
-**7c. Send one sample event** so HubSpot learns the payload shape. Send the
-**full** field set now, because fields missing from the sample can't be mapped
-later.
+**7c. Send one test event** so HubSpot learns the payload shape. Send the
+**full** field set now, because fields missing from the test event can't be
+mapped later.
 
 PowerShell:
 
@@ -470,35 +528,57 @@ Or any HTTP client, as `POST` with `Content-Type: application/json`:
 }
 ```
 
-**7d. Map the fields.** Once HubSpot shows the sample, declare each field.
+The webhook replies **`202 Accepted`** with a body like `{"id": "..."}`. When the
+event arrives, HubSpot shows **"Review your test event"** with each key and
+value. If a field is missing, fix the sender and click **Retry a new test
+event**.
 
-> ⚠️ **Type every field as String, especially `preferred_date`.** If HubSpot
-> types it as a Date, it reformats the value. The code compares it as the literal
-> text `2026-09-08`, so a reformatted date silently fails to match, and the
-> contact is booked on the next open day instead of the day they chose.
+**7d. Map.** The heading reads *"Map the data for your webhook's properties"*.
+Each row has three columns: **Third-party property label**, **HubSpot property
+label** and **Data type**. **Data type** starts empty, and HubSpot won't let you
+continue until every row has one (*"There are errors or missing values in the
+properties below…"*).
 
-**7e. Match step.** Match the event to a contact on **Email**.
+> ⚠️ **Set every Data type to the text/string type, especially
+> `preferred_date`.** If it's typed as a date, HubSpot reformats the value. The
+> code compares it as the literal text `2026-09-08`, so a reformatted date
+> silently fails to match, and the contact is booked on the next open day instead
+> of the day they chose.
+
+**7e. Match.** The heading reads *"Match your enrollment property"*.
+- **Associated object:** Contact
+- **Third-party property label:** `email`
+- **HubSpot property label:** Email
 
 > ⚠️ **Unknown emails fail silently.** The trigger enrolls only an *existing*
 > contact. If no contact has that email, HubSpot still returns the same
 > `202 Accepted`, and nothing appears in the workflow history. The Aloware ↔
 > HubSpot contact sync is what makes this rare.
 
-**7f. Save the trigger and copy the webhook URL.** Aloware will call it in
-Step 10.
+**7f. Finish the wizard.** The trigger card now reads *"[your webhook name] has
+been completed any number of times"*. Keep the webhook URL for Step 10.
 
-✅ **Check:** the trigger shows your seven fields, and each is typed as String.
+✅ **Check:** all seven fields are mapped with a text data type, and the match is
+`email` → Email.
 
 ### Step 8: Add the custom code action
 
 *About 20 minutes.*
 
-1. Under the trigger, click **+ → Data ops → Custom code**.
-2. **Language:** Node.js 20.x.
-3. **Secrets:** click **Add secret**, name it **`HUBSPOT_BOOKING_TOKEN`**, and
-   paste the Step 4 key as its value. Then select it for this action.
-4. **Properties to include in code:** add each of the following. The name on the
-   left must match exactly.
+1. Click the **+** under the trigger and choose **Custom code** (it's in the
+   **Data ops** group, or search for `code`). The panel opens titled **Custom
+   code**, with Cancel and Save.
+2. **Language:** **Node.js 20.x**.
+3. **Secrets** (*"Choose one or multiple secrets to use in this action."*): open
+   the dropdown and create a secret named **`HUBSPOT_BOOKING_TOKEN`**, with the
+   Step 4 key as its value. Then make sure it's selected as a chip in the field.
+   The code reads it as `process.env.HUBSPOT_BOOKING_TOKEN`.
+4. **Property to include in code** (*"Each property needs to be defined in your
+   code."*): for each row below, click **Add property**, type the **key** on the
+   left, then use **Select a property** on the right. That opens the **All data
+   tokens** panel. Webhook fields are grouped under your webhook's name, and
+   contact properties under **Enrolled contact**. A row with no value shows
+   *"Property selection is required"*.
 
    | Input name | Value |
    |---|---|
@@ -517,9 +597,12 @@ Step 10.
    invents consent.
 
 5. **Code:** delete the sample code and paste in **all** of
-   `src/booking-action.js`.
-6. **Data outputs:** click **Add output** for each row below. Anything you don't
-   declare is invisible to later steps.
+   `src/booking-action.js`. The **Full screen** button makes this easier.
+6. **Data outputs** (*"Define the data type and name of outputs from your
+   code."*): click **Add output** for each row below, choosing the type from the
+   dropdown (String, Number or Enumeration). Anything you don't declare is
+   invisible to later steps. HubSpot also adds a built-in `hs_execution_state`
+   output. Leave it alone.
 
    | Output | Type |
    |---|---|
@@ -534,14 +617,18 @@ Step 10.
    | `payload_shape` | String |
    | `error_detail` | String |
 
-7. **Test it.** Click **Test action**, choose a real contact that has an email,
-   and fill the test inputs with a day that has openings.
+7. Click **Save**.
+8. **Test it.** Expand **Test action**. HubSpot warns *"Changes will be applied
+   to your contact"*, and this test really does book a meeting. Pick a test
+   contact with an email in the **Contact** dropdown, and fill each **Enter test
+   value** box, using a `preferred_date` that has openings. Click **Test**.
 
-✅ **Check:** the test returns `booking_status: booked`, a real
-`calendar_event_id`, and a sensible `booking_label` such as
-`Tuesday, September 8 at 2:00 PM EDT`. Expect a runtime of roughly 0.7 s and
-roughly 100 MB of memory, well within HubSpot's 20 s and 128 MB limit. **Delete
-the test meeting.**
+✅ **Check:** **Status** reads *Success*. The **Data outputs** table shows
+`booking_status` = `booked`, a real `calendar_event_id`, and a sensible
+`booking_label` such as `Tuesday, September 8 at 2:00 PM EDT`. An output that
+reads *"Not defined in code"* has a typo in its name. **Logs** shows Memory and
+Runtime. Expect roughly 0.7 s and roughly 100 MB, well within HubSpot's 20 s and
+128 MB limit. **Delete the test meeting.**
 
 ### Step 9: Branch the workflow on the result
 
@@ -577,44 +664,135 @@ Aloware.
 
 *About 15 minutes.*
 
-1. In Aloware, open the AloAI agent and go to **Custom Functions → + Add Function**.
+Aloware's custom function screen is **different for text and voice agents**.
+Follow 10A for an SMS agent or 10B for a voice agent. Both send the same JSON to
+the same HubSpot webhook.
+
+The variables are the same either way:
+
+| Variable | Required | Description to give it |
+|---|---|---|
+| `first_name` | Yes | The contact's first name |
+| `last_name` | No | The contact's last name, if given |
+| `email` | Yes | The contact's email address. HubSpot Meetings can't book without one. |
+| `phone` | No | The contact's phone number, if given |
+| `preferred_date` | Yes | The day they chose, exactly `YYYY-MM-DD` |
+| `preferred_period` | No | `morning`, `afternoon` or `evening` |
+| `timezone` | No | IANA timezone like `America/Chicago`, only if they mention one |
+
+#### 10A. Text (SMS) agent
+
+1. Open the text agent (its subtitle reads e.g. *Text - Inbound*). In the left
+   menu click **Custom Functions**, then **+ Add function**. The modal **Create
+   Custom Function** opens.
+2. **Set up your custom function details:**
+
+   | Field | Value |
+   |---|---|
+   | **Function name** *(255 chars)* | `request_booking` |
+   | **Function description** *(255 chars)* | `Use when the contact has agreed to a call and given a day and rough time. Submits the booking request. Do not use before they have chosen a day.` |
+   | **Reply to the contact during execution?** | **On**, so the agent says something like "Locking that in now" while HubSpot works |
+   | **Reply to the contact after execution?** | **On** |
+
+3. **Variables:** click **+ Add variable** for each row of the table above. Each
+   row has **Name**, **Description**, **Type** and **Required** (*"Is required
+   to execute?"*, default *No*). Set Type to the text/string option.
+4. **Connect to the API** has four tabs:
+   - **Endpoint:** set the method dropdown to **POST**, and paste the HubSpot
+     webhook URL from Step 7b in the URL box. **Timeout** defaults to 10
+     seconds, which is fine.
+   - **Headers:** add `Content-Type` = `application/json`.
+   - **Authorization:** leave it empty. The HubSpot webhook URL needs no auth.
+   - **Body:** ⚠️ **Variables aren't sent automatically.** Click **+ Add body**
+     once per variable. Set **Type** to *Variable*, **Name** to the exact field
+     name (e.g. `preferred_date`), and **Value** to the matching variable from
+     the dropdown. Seven rows in all. Any field without a body row never reaches
+     HubSpot.
+5. **Test the API Call:** click **Make API Call**. Aloware asks you to *"provide
+   some values for the mapped variables"*, so enter a real contact's email and a
+   day with openings. A green toast reads *"API call was successful!"*.
+6. **Map the API response fields…:** skip it. The webhook only returns an id, and
+   the real answer arrives by SMS from the workflow.
+7. Click **Save**.
+8. Go to the **Instructions** tab. Put your cursor where the booking step goes,
+   click **+ Add Action**, and pick `request_booking`. It appears in the
+   instructions as a chip reading *"Run this function: request_booking"*. In the
+   raw text that's `{Run this function: request_booking|cf_…}`. Deleting the
+   chip deletes the function's trigger.
+
+#### 10B. Voice agent
+
+1. Open the voice agent (its subtitle reads e.g. *Voice - Inbound*). In the
+   right-hand **Functions** panel, click **+ Add**. In the **Add Function** modal,
+   find the custom function option (under a category like *Integrations* or
+   *Advanced*, or use **Search functions…**). The **Custom Function** modal
+   opens.
 2. Fill in:
 
    | Field | Value |
    |---|---|
-   | **Function Name** | `request_booking` |
-   | **Description** *(255-char limit)* | `Use when the contact has agreed to a call and given a day and rough time. Submits the booking request. Do not use before they have chosen a day.` |
-   | **Method** | `POST` |
-   | **Endpoint URL** | The HubSpot webhook URL from Step 7f |
-   | **Headers** | `Content-Type` → `application/json` |
-   | **Respond during execution** | **On.** On voice this is essential, or the caller sits in silence. |
-   | **Respond after execution** | **On** |
+   | **Name** *(64 chars, no spaces)* | `request_booking` |
+   | **Description** | Same text as in 10A |
+   | **API Endpoint** | Method **POST**. Paste the HubSpot webhook URL in *"Enter the URL of the custom function"*. |
+   | **Timeout** | 15 s is plenty. The default is 120 s. |
+   | **Headers** | **+ New key value pair** → `Content-Type` = `application/json` |
+   | **Query Parameters** | None |
+   | **Parameters (Optional)** | The JSON schema below. Turn **Payload: args only** **on** so the body is just the arguments. |
+   | **Body Template (Optional)** | Leave empty |
+   | **Response Format** | Auto-detect |
+   | **Response Variables** | None needed |
+   | **Speak During Execution** | ✅ Checked, so the caller doesn't sit in silence. Pick *Static Sentence*, e.g. "One moment while I lock that in." |
+   | **Speak After Execution** | ✅ Checked (the default) |
 
-3. **Variables:** add each one.
+   Paste this schema into **Parameters** (JSON mode):
 
-   | Variable | Type | Required | Notes |
-   |---|---|---|---|
-   | `first_name` | string | Yes | |
-   | `last_name` | string | No | The code splits a full name if this is empty |
-   | `email` | string | Yes | HubSpot Meetings can't book without an email |
-   | `phone` | string | No | The contact record's number is used first |
-   | `preferred_date` | string | Yes | Exactly `YYYY-MM-DD` |
-   | `preferred_period` | string | No | `morning`, `afternoon` or `evening` |
-   | `timezone` | string | No | IANA name, e.g. `America/Chicago`. Used only if HubSpot has none. |
+   ```json
+   {
+     "type": "object",
+     "properties": {
+       "first_name":       { "type": "string", "description": "The caller's first name" },
+       "last_name":        { "type": "string", "description": "The caller's last name, if given" },
+       "email":            { "type": "string", "description": "The caller's email from the contact information you already have. Never ask for it aloud." },
+       "phone":            { "type": "string", "description": "The caller's phone number, if given" },
+       "preferred_date":   { "type": "string", "description": "The day they chose, exactly YYYY-MM-DD" },
+       "preferred_period": { "type": "string", "enum": ["morning", "afternoon", "evening"] },
+       "timezone":         { "type": "string", "description": "IANA timezone, only if the caller mentions one" }
+     },
+     "required": ["first_name", "preferred_date"]
+   }
+   ```
 
-4. Save, then attach it in the agent's instructions with **Add action → Custom
-   function → `request_booking`**, set to trigger once the contact has agreed to
-   a day.
+   `email` isn't marked required on voice, because the agent shouldn't ask for
+   it aloud. **But HubSpot matches the webhook on email**, so the agent has to
+   *already know it*. In the right-hand **Context** section, turn on **Contact
+   Information** so the agent can see the caller's email from their Aloware
+   contact record and pass it along. If the caller has no email on file, the
+   webhook matches nobody and nothing is booked (see
+   [Known limitations](#9-known-limitations)).
+3. **Test Function:** in the REQUEST column, check the **Request Preview**, then
+   click **Send Test Request**. The RESPONSE column should show a success status
+   with an `id` in the body.
+4. Click **Save**. The function appears in the prompt as a tag (*"Appears as a tag
+   in your prompt"*). Removing the tag deletes the function.
 
-✅ **Check:** fire the function from Aloware's test console with a real contact's
-email. Within a few seconds, the HubSpot workflow's **History** tab shows a new
-enrollment, and the action output is `booked`.
+✅ **Check (either type):** after a test call, open the HubSpot workflow and click
+**Enrollment history**. Within a few seconds there's a new run. Open it: **Logs of
+one run** shows *"Successfully executed"* and *"Completed workflow"*, and the
+custom code output is `booked`.
 
 ### Step 11: Add the booking instructions to the agent
 
 *About 15 minutes.*
 
-Paste one of these into the part of the agent's prompt that handles booking.
+Where the prompt goes:
+- **Text agent:** the **Instructions** tab, in the **Instructions** box (up to
+  80,000 characters). Paste the text in, then insert the `request_booking` chip
+  at step 4 with **+ Add Action** (Step 10A.8). Set the **Greeting Message**
+  above it too.
+- **Voice agent:** the **Configure** tab, in the prompt editor. The function tag
+  from Step 10B goes at step 3.
+
+Paste one of these into the part of the prompt that handles booking.
 **The "Never state a specific appointment time" paragraph is the most important
 one.** The agent can't know which slot was booked until HubSpot answers, and
 without that rule it will make a time up.
@@ -658,7 +836,8 @@ When the caller wants to book a call:
 2. Convert their answer to a calendar date in YYYY-MM-DD format,
    using today's date to resolve "tomorrow", "next Tuesday" and the
    like. Map their time of day to morning, afternoon or evening.
-3. Call request_booking with those values and their first name.
+3. Call request_booking with those values, their first name, and the
+   email address from their contact information.
 4. Tell them you are locking it in and the calendar invite will
    arrive by email shortly.
 
@@ -675,14 +854,17 @@ On voice, the email comes from the HubSpot contact record, which is why the
 voice prompt never asks for one. Spelling an email address aloud is where voice
 agents reliably fail.
 
-> **Testing on voice first?** If text agents aren't enabled yet, build a **blank**
-> inbound voice agent (not a *Booking* template, since those come pre-wired to
-> Cal.com and Calendly) and point it at a test line. The same Custom Function
-> carries over to the text agent unchanged later.
+> **Testing on voice first?** If SMS isn't live yet (for example, while your
+> 10DLC campaign is pending), build an inbound voice agent. In the **Create
+> agent** modal, choose **Blank agent** (*"Start from scratch."*). Don't pick a
+> template from the *Booking* tab, like *Generic Appointment Booking*, because
+> those come pre-wired to other schedulers. Point the agent at a test line. The
+> HubSpot side is identical. You'll re-create the function on the text agent's
+> screen later (10A), since the two screens differ.
 
-✅ **Check:** in Aloware's test console, ask to book. The agent should ask for a
-day, call `request_booking`, and say it's *locking it in*, **without** naming a
-time.
+✅ **Check:** test the agent (voice agents have a **Test your Agent** button in
+the header). Ask to book. The agent should ask for a day, run `request_booking`,
+and say it's *locking it in*, **without** naming a time.
 
 ### Step 12: Test end to end
 
@@ -693,7 +875,7 @@ email you control.
 open.
 
 ✅ **Check all of these:**
-- [ ] The HubSpot workflow **History** shows the enrollment.
+- [ ] The HubSpot workflow's **Enrollment history** shows the run.
 - [ ] The action output is `booked`.
 - [ ] The Meeting is on the contact, with **Call and meeting type = AI Booked
       Call**.
@@ -717,9 +899,19 @@ agent.
 
 ### Step 13: Go live and watch the first day
 
-1. Attach the agent to its production number or campaign in Aloware.
+1. **Attach the agent to a line in Aloware.** Go to **Lines**, open the line,
+   and click the **Routing & IVR** tab:
+   - **SMS agent:** under *"Who should handle incoming messages?"*, choose **An
+     AloAi Agent**, then pick it in **Select AloAi Agent:**.
+   - **Voice agent:** under *"Who should answer incoming calls?"*, choose **An
+     AloAi Agent**, then pick it in **Select AloAi Agent:**.
+   - Click **Save**. A line can have a voice agent and a text agent at the same
+     time, because each is picked separately.
 2. During the first day, check:
-   - the HubSpot workflow **History**, filtered to errors
+   - the HubSpot workflow's **Enrollment history** (use **More filters** to find
+     failed runs)
+   - each Aloware contact's timeline, which logs *"Contact enrolled to AloAi Text
+     Agent: …"* and every agent reply
    - the task queue fed by the `not_scheduled`, `no_availability` and `error`
      branches
    - a sample of `AI Booked Call` meetings, compared against what each contact
@@ -745,8 +937,8 @@ agent reads the sentence aloud and copies the chosen slot's date and period into
 `request_booking`, so it never does any time math.
 
 **6a. Create the cache record in HubSpot.**
-1. Go to **Settings → Objects → Custom Objects** and create an object, for
-   example `AI Booking Cache`.
+1. Go to **Settings → Data Management → Objects → Custom Objects** and create an
+   object, for example `AI Booking Cache`.
 2. Add these properties, **all Single-line text**, including the dates:
 
    | Property | Example value |
@@ -786,20 +978,26 @@ happy to hear read aloud.
 only. It will sit in an Aloware header outside HubSpot, so if it leaks the worst
 case is someone learning when your team is free.
 
-**6e. Add the second Aloware Custom Function.**
+**6e. Add the second Aloware custom function.** It's a plain GET that takes no
+variables. The URL, with the properties list built in, is:
 
-| Field | Value |
-|---|---|
-| Name | `get_available_times` |
-| Description | `Use when the caller asks what times are available, or before offering times. Returns the current openings.` |
-| Method | `GET` |
-| URL | `https://api.hubapi.com/crm/v3/objects/{type id}/{record id}` |
-| Query parameter | `properties` → `slot_offer_text,slot_1_label,slot_1_date,slot_1_period,slot_2_label,slot_2_date,slot_2_period,slot_3_label,slot_3_date,slot_3_period` |
-| Header | `Authorization` → `Bearer <read-only key from 6d>` |
-| Parameters | None |
-| Speak after execution | On |
+```
+https://api.hubapi.com/crm/v3/objects/<type id>/<record id>?properties=slot_offer_text,slot_1_label,slot_1_date,slot_1_period,slot_2_label,slot_2_date,slot_2_period,slot_3_label,slot_3_date,slot_3_period
+```
 
-**Response variables (JSONPath):**
+The header is `Authorization: Bearer <read-only key from 6d>`.
+
+| Setting | Text agent (Create Custom Function) | Voice agent (Custom Function) |
+|---|---|---|
+| Name | **Function name:** `get_available_times` | **Name:** `get_available_times` |
+| Description | **Function description:** `Use when the contact asks what times are available, or before offering times. Returns the current openings.` | **Description:** same text |
+| Method and URL | **Endpoint** tab: **GET** and the URL above | **API Endpoint:** **GET** and the URL without `?properties=…`, then put `properties` under **Query Parameters** |
+| Auth | **Headers** tab (or **Authorization** tab): `Authorization` = `Bearer …` | **Headers:** `Authorization` = `Bearer …` |
+| Variables / parameters | None | **Parameters:** empty |
+| Speak / reply | **Reply to the contact after execution?** On | **Speak After Execution** checked |
+| Response | Click **Make API Call**, then under **Map the API response fields…** use **+ Add response mapping** for each field below | **Response Variables:** **+ New key value pair** for each field below (JSONPath) |
+
+**Response fields to map (JSONPath):**
 
 ```text
 offer_text     $.properties.slot_offer_text
@@ -813,6 +1011,11 @@ slot_3_label   $.properties.slot_3_label
 slot_3_date    $.properties.slot_3_date
 slot_3_period  $.properties.slot_3_period
 ```
+
+On a **text agent**, the mapping's **Value** is a dropdown of fields from the
+test response, so run **Make API Call** first and then pick
+`properties.slot_offer_text` and the rest. On a **voice agent**, type the
+JSONPath as shown.
 
 **6f. Prompt addition:**
 
@@ -927,10 +1130,17 @@ All of these were verified against a live portal. There's more detail in
 
 ## 9. Known limitations
 
-- **First-time callers can't book on voice.** By default Aloware doesn't create
-  HubSpot contacts for unknown inbound numbers, so there's nothing for the
-  webhook to match. HubSpot Meetings also needs an email. SMS solves both
-  problems, because the agent can collect the email.
+- **Brand-new contacts can't book unless they already exist in HubSpot.** The
+  webhook trigger only enrolls an existing HubSpot contact matched on email. By
+  default, Aloware doesn't create HubSpot contacts for unknown numbers (an
+  unknown caller shows up in Aloware as a "No Name" contact with only a phone
+  number). Leads who came in through a HubSpot form are fine. Truly cold
+  inbound contacts need a contact-creation step before this works.
+- **Voice is the weaker channel.** HubSpot Meetings needs an email, and a voice
+  agent can't reliably collect one. Voice works for callers whose email is
+  already on their record. SMS can collect it.
+- **SMS needs an approved 10DLC campaign** on the Aloware line before any agent
+  reply is delivered.
 - **The first reply never names a time.** The confirmation with the real time
   arrives a few seconds later.
 - **The round robin is whatever the link does.** There's no weighting beyond what
@@ -946,7 +1156,10 @@ All of these were verified against a live portal. There's more detail in
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Agent calls the function, nothing in the workflow history | No HubSpot contact has that email | Confirm the contact exists and the email is in the payload (Step 7e) |
+| Agent calls the function, nothing in the workflow's Enrollment history | No HubSpot contact has that email, or (text agent) `email` has no **Body** row | Confirm the contact exists (Step 7e). On a text agent, check that every variable has a Body row (Step 10A.4). |
+| Workflow runs, but `preferred_date` or other fields arrive empty | The text agent's **Body** tab is missing those rows | Add one *Variable* body row per field (Step 10A.4) |
+| Agent's SMS replies show *"Failed"* / *"Messaging is disabled for this line"* | The line's 10DLC campaign isn't approved yet | Finish the 10DLC registration from Aloware's yellow banner (**Submit info**). Test on voice meanwhile. |
+| Agent never answers texts or calls | The agent isn't attached to the line | **Lines → your line → Routing & IVR** (Step 13) |
 | `error`, and `error_detail` names `HUBSPOT_BOOKING_TOKEN` | The secret isn't selected on the action | Step 8.3 |
 | `error` with **401** | Key wrong or truncated | Re-copy the full key from **Show → Copy** |
 | `error` with **403** | Missing write scope | Add `crm.objects.contacts.write` (Step 4) |
