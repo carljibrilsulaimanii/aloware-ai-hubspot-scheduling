@@ -490,6 +490,8 @@ If PowerShell refuses to run the script, allow local scripts for this window onl
 .\scripts\probe.ps1 -Token pat-na1-xxxx -Slug your-team/ai-booked-call
 ```
 
+Runs [`scripts/probe.ps1`](scripts/probe.ps1).
+
 ```bash
 HUBSPOT_TOKEN=pat-na1-xxxx MEETING_SLUG=your-team/ai-booked-call bash scripts/probe.sh
 ```
@@ -635,6 +637,8 @@ Or let the probe send it:
 ```powershell
 .\scripts\probe.ps1 -Token pat-na1-xxxx -Slug your-team/ai-booked-call -WebhookUrl "<the webhook URL>" -Email you@yourdomain.com
 ```
+
+Runs [`scripts/probe.ps1`](scripts/probe.ps1).
 
 Or any HTTP client, as `POST` with `Content-Type: application/json`:
 
@@ -1756,6 +1760,8 @@ npm test
 ```bash
 npm run demo
 ```
+
+Runs [`examples/demo.mjs`](examples/demo.mjs).
 
 The tests stub HubSpot and **freeze the clock**, so they never go stale as their
 sample dates pass. They cover busy-block exclusion, the link's own duration,
