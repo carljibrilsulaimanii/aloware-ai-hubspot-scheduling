@@ -184,7 +184,7 @@ docs/
   API-NOTES.md                Verified HubSpot Scheduler API behavior, payload by payload
 ```
 
-**You paste `src/booking-action.js` into HubSpot.** Everything else is for
+**You paste [`src/booking-action.js`](src/booking-action.js) into HubSpot.** Everything else is for
 checking, testing or reference.
 
 ---
@@ -479,7 +479,7 @@ you pass `-Book`.
   `cd $HOME\Downloads\aloware-ai-hubspot-scheduling`. Use the PowerShell script:
   bash usually isn't on the Windows PATH even when Git Bash is installed.
 - **macOS / Linux / Git Bash:** open a terminal in the same folder and use
-  `scripts/probe.sh`.
+  [`scripts/probe.sh`](scripts/probe.sh).
 
 If PowerShell refuses to run the script, allow local scripts for this window only:
 `Set-ExecutionPolicy -Scope Process Bypass`.
@@ -543,7 +543,7 @@ booking there's no meeting to delete, only the contact.
 
 *About 5 minutes.*
 
-Open `src/booking-action.js` in any text editor and change the settings near the
+Open [`src/booking-action.js`](src/booking-action.js) in any text editor and change the settings near the
 top:
 
 ```js
@@ -576,7 +576,7 @@ If probe section 1 showed only `/v3/` answering, also change `SCHEDULER` to
 `'/scheduler/v3/meetings/meeting-links'`.
 
 If you plan to build the optional section 6, make the same `MEETING_SLUG`,
-`DEFAULT_TZ`, `PERIODS` and `SCHEDULER` changes in `src/refresh-slots-action.js`
+`DEFAULT_TZ`, `PERIODS` and `SCHEDULER` changes in [`src/refresh-slots-action.js`](src/refresh-slots-action.js)
 now, so the two files can't drift.
 
 > ⚠️ **Match `FORM_FIELDS` to the form exactly, in both directions.** A required
@@ -794,7 +794,7 @@ Why these sources:
 never invents consent.
 
 **8d. Paste the code.** Scroll to **Code**, click into the editor, select all and
-delete the sample code, then paste in **all** of `src/booking-action.js`. The
+delete the sample code, then paste in **all** of [`src/booking-action.js`](src/booking-action.js). The
 **Full screen** button makes this easier. The file ends with an `exports.__test`
 block. Leave it in: HubSpot only calls `exports.main`, and the block is what the
 offline tests use.
@@ -1422,8 +1422,8 @@ nothing is booked, and there's no half-finished state to clean up.
    minimum notice and availability, because the bot will offer whatever it finds.
 4. Run the read-only probe on the new slug (Step 5b). Confirm the pool, `calendar
    OK` for every rep, and `formFields`.
-5. Update `MEETING_SLUG` in `src/booking-action.js` (and in
-   `src/refresh-slots-action.js` if you built section 6). Update `FORM_FIELDS` to
+5. Update `MEETING_SLUG` in [`src/booking-action.js`](src/booking-action.js) (and in
+   [`src/refresh-slots-action.js`](src/refresh-slots-action.js) if you built section 6). Update `FORM_FIELDS` to
    match the new form (Step 6). Run `npm test`.
 6. In HubSpot, open the custom code action, select all in the code editor and paste
    the **whole** updated file. **Save**, then **Review and update** the workflow
@@ -1504,7 +1504,7 @@ differ). Save. The key value doesn't change.
 4. **Property to include in code:** optional. `timezone` sets the zone the labels
    are written in. Leave it out to use `DEFAULT_TZ`.
 5. **Code:** delete the sample code and paste in **all** of
-   `src/refresh-slots-action.js`. Its `MEETING_SLUG` must be exactly the same as
+   [`src/refresh-slots-action.js`](src/refresh-slots-action.js). Its `MEETING_SLUG` must be exactly the same as
    in `booking-action.js` (Step 6), or the agent offers times it can't then book.
 6. **Data outputs:**
 
