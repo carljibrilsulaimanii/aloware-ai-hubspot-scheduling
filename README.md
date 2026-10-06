@@ -1786,4 +1786,4 @@ contact would receive, for ten scenarios.
 
 ---
 
-Built by [Jibril Sulaiman](https://github.com/jbrillionaire).
+Built by [Jibril Sulaiman](https://github.com/carljibrilsulaimanii).
