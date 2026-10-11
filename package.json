@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node test/booking-action.test.mjs && node test/refresh-slots-action.test.mjs",
+    "test": "node test/booking-action.test.mjs && node test/refresh-slots-action.test.mjs && node test/booking-relay-action.test.mjs",
     "demo": "node examples/demo.mjs"
   }
 }

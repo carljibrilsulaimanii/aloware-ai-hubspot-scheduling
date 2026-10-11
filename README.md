@@ -163,8 +163,8 @@ an integration that has to write meeting types back into HubSpot.
 | **Node.js 20** on your computer | Optional. Only needed to run the tests and demo locally. |
 
 **Time:** about four hours for Steps 1–13, plus about two hours for the optional
-[section 6](#6-optional-let-the-agent-offer-real-times) and 45 minutes for the HubSpot half of
-the optional [section 7](#7-optional-let-brand-new-contacts-book-form-trigger).
+[section 6](#6-optional-let-the-agent-offer-real-times) and about 1.5 hours for the optional
+[section 7](#7-optional-let-brand-new-contacts-book-form-trigger).
 
 ---
 
@@ -174,9 +174,11 @@ the optional [section 7](#7-optional-let-brand-new-contacts-book-form-trigger).
 src/
   booking-action.js           HubSpot custom code action: reads availability, books, returns a status
   refresh-slots-action.js     Optional: writes the open times (next 3, plus a two-week table) to a CRM record the agent can read
+  booking-relay-action.js     Optional: turns the agent's flat JSON into a HubSpot form submission, so new contacts can book
 test/
   booking-action.test.mjs     Offline tests with HubSpot stubbed; every branch
   refresh-slots-action.test.mjs
+  booking-relay-action.test.mjs
 examples/
   demo.mjs                    Prints what the action does in 10 scenarios, with no network
 scripts/
@@ -997,7 +999,7 @@ opens, with **Close** and **Save** at the top.
 | Field | Value |
 |---|---|
 | **Function name** *(255 chars)* | `request_booking` |
-| **Function description** *(255 chars)* | `Submits a booking request once the contact has given a day and rough time of day. Use only after they've agreed to a call.` |
+| **Function description** *(the counter says 255, but only the first 191 characters are saved)* | `Submits a booking request once the contact has given a day and rough time of day. Use only after they've agreed to a call.` (Section 7h replaces this with a version that also fixes the reply after booking.) |
 | **Reply to the contact during execution?** | **Off**. The webhook answers in about 120 ms, so nobody notices a pause on SMS. |
 | **Reply to the contact after execution?** | **On**, so the agent confirms it's locking it in |
 
@@ -1672,7 +1674,7 @@ afternoon times from the table, worded exactly as on the record.
 
 ## 7. Optional: let brand-new contacts book (form trigger)
 
-*About 45 minutes for the HubSpot half.*
+*About 1.5 hours.*
 
 The Step 7 webhook trigger only enrolls a contact HubSpot **already has** with that
 exact email. Someone who texts in cold, gives a new email, or makes a typo gets
@@ -1684,14 +1686,18 @@ A HubSpot **form submission** has no such limit: it creates the contact if the
 email is new, updates it if not, and can start the same workflow. This section
 swaps the trigger to a form.
 
-> ⚠️ **Read the limit before you build this.** The HubSpot half below was built
-> and verified: a form submission for a brand-new email created the contact,
-> booked the meeting on the round robin, and texted the confirmation back within
-> a minute. **The Aloware half is not solved.** An Aloware Custom Function can't
-> submit a HubSpot form (see 7e). Swapping the trigger also means the Step 10
-> webhook call no longer enrolls anyone. Only switch once you have something that
-> submits the form for the agent, or keep this workflow on the webhook and use the
-> form for your own sources (a web form, another tool).
+An Aloware Custom Function can't submit a HubSpot form itself (7e), so a small
+relay workflow sits in between (7f) and the agent posts to it (7g).
+
+> ⚠️ **Build 7a to 7h in one sitting.** Once the trigger is swapped (7c), the
+> Step 10 webhook call no longer enrolls anyone, so the agent can't book until the
+> relay (7f) and the new function settings (7g) are in.
+
+This whole path was built and run end to end from a phone: a brand-new contact
+texted the agent, picked one of three offered times, and gave a full name and a
+new email. HubSpot created the contact with the name split into first and last,
+booked the meeting on the round robin, and the confirmation text arrived about 30
+seconds after the agent's reply.
 
 **7a. Create three contact properties.** In **Settings → Data Management →
 Properties**, choose **Contact properties** and click **Create property** for each:
@@ -1775,8 +1781,8 @@ history shows a run with `booking_status` `booked`, the meeting is on a rep's
 calendar, and (if Step 9's text action is set up) the confirmation text goes to
 the phone number. Cancel the test meeting afterwards.
 
-**7e. Why the agent can't submit the form itself.** Every one of these was tried
-from an Aloware text agent's Custom Function:
+**7e. Why the agent needs a relay.** Every one of these was tried from an Aloware
+text agent's Custom Function:
 
 - **Aloware always sends a flat JSON body**, whatever `Content-Type` header you
   set. HubSpot's v2 form endpoint (the one in the check above) reads only
@@ -1792,10 +1798,145 @@ from an Aloware text agent's Custom Function:
 - **"API call was successful!" proves nothing.** Aloware shows it for every one of
   the attempts above. Always check HubSpot for the contact.
 
-The way through is a small relay: a HubSpot workflow that isn't tied to a CRM
-record (Data Hub can build these), started by a webhook the agent posts its usual
-flat JSON to, with one custom code action that rebuilds it as a v3 form
-submission. That relay hasn't been run end to end yet, so it isn't in this repo.
+So the agent posts its usual flat JSON to a webhook on a HubSpot workflow that
+isn't tied to any CRM record, and one custom code action rebuilds it as a v3 form
+submission.
+
+**7f. Build the relay workflow.** *About 30 minutes.* This needs **Data Hub
+Professional** (the same requirement as Step 1), because the workflow starts from a
+webhook without a record.
+
+1. **Automation → Workflows → Create workflow → From scratch.** In the trigger
+   panel, **Trigger when** = **Webhook event is received**. Open **Webhook event**
+   (*"Choose event or create a new one"*) and click **Create new webhook event**.
+2. In **Create new webhook event**, fill **Webhook event name** (e.g.
+   `AI Booking — Relay`) and a **short Description**. Under **Connect webhook**,
+   click **Copy** next to the URL (it looks like
+   `https://api.hubapi.com/automation/v4/webhook-triggers/<portal id>/<id>`), put it
+   in your scratch note, and click **Listen for events**.
+
+   > ⚠️ **Keep the description short.** A description of about 300 characters made
+   > the final **Create new event** step fail with a bare *"Request ... failed with
+   > status 400"* and no reason. About 100 characters worked.
+
+3. Send one test event with every field the agent will send:
+
+   ```bash
+   curl -X POST "<the relay webhook URL>" -H "Content-Type: application/json" \
+     -d '{"email":"you@example.com","full_name":"Alex Morgan","phone":"+15550100123","preferred_date":"2026-10-14","preferred_period":"morning","timezone":"America/New_York"}'
+   ```
+
+   HubSpot answers `202` and the modal shows *"Event received at ..."*. Click
+   **Next: Event properties**.
+4. **Edit event properties:** set every **Field Type** to **String**. HubSpot
+   guesses **Date** for `preferred_date`; change it, for the same reason as Step 7d.
+   Click **Next: Link to object**.
+5. Choose **No, keep this event unconnected to CRM records** (*"These events can
+   only be used in workflows"*). The warning says the link setting can't be changed
+   later. Click **Create new event**.
+6. The trigger's **Rules** tab has **Records can repeat runs**, greyed out. That's
+   expected: with no record, every webhook event is its own run. Two requests sent
+   one second apart both ran.
+7. Click the pencil by **Unnamed workflow** and name it `AI Booking — Relay`.
+8. Click **+** under the trigger → **Action** → search `code` → **Custom code**.
+   **Node.js 20.x**, no secrets. Under **Property to include in code**, click **Add
+   property** for each row, type the key, then pick the token from the trigger data
+   group named after your webhook event:
+
+   | Key | Token |
+   |---|---|
+   | `email` | `email` |
+   | `full_name` | `full_name` |
+   | `phone` | `phone` |
+   | `preferred_date` | `preferred_date` |
+   | `preferred_period` | `preferred_period` |
+   | `timezone` | `timezone` |
+
+9. **Code:** delete the sample code and paste in **all** of
+   [`src/booking-relay-action.js`](src/booking-relay-action.js). Set the two
+   constants near the top:
+
+   | Constant | Set to |
+   |---|---|
+   | `PORTAL_ID` | Your portal id from 7b |
+   | `FORM_GUID` | Your form's GUID from 7b |
+
+10. **Data outputs:** **Add output** three times:
+
+    | Type | Name |
+    |---|---|
+    | String | `reason` |
+    | String | `email` |
+    | Boolean | `submitted` |
+
+11. Expand **Test action**, fill the property test values (a test email, a full
+    name, a date with an opening, `morning`, `America/New_York`), click **Test**, and
+    confirm the *"Test action?"* dialog. This makes a **real** submission, so a real
+    meeting gets booked; cancel it afterwards.
+
+    ✅ **Check:** `hs_execution_state` is `SUCCESS`, `submitted` is `true`, `reason`
+    is `submitted`, and the log reads *"Submitted the booking form for ..."*. Within
+    a minute the meeting exists and the confirmation text has gone out.
+
+12. Click **Publish**. On later edits, the button reads **Publish changes**.
+
+✅ **Check:** post the curl from step 3 twice, a second apart, with two different
+emails. **Run History** shows two runs, both **Done**, and both contacts get a
+meeting and a confirmation text.
+
+**7g. Point the agent's `request_booking` at the relay.** In Aloware, open the
+agent → **Custom Functions** → the edit icon on `request_booking`:
+
+1. **Variables:** rename `first_name` to `full_name`, with the description `The
+   contact's full name, first and last, as they gave it, for example Jordan Smith.`
+   Add `phone` (String, not required) if you don't have it.
+2. **Endpoint** tab: **POST**, and paste the relay webhook URL from 7f.
+3. **Headers** tab: `Content-Type` = `application/json`.
+4. **Body** tab: one **Variable** row per field, name = value:
+
+   | Type | Name | Value |
+   |---|---|---|
+   | Variable | `email` | `email` |
+   | Variable | `full_name` | `full_name` |
+   | Variable | `phone` | `phone` |
+   | Variable | `preferred_date` | `preferred_date` |
+   | Variable | `preferred_period` | `preferred_period` |
+   | Variable | `timezone` | `timezone` |
+
+   > ⚠️ **Renaming a variable deletes the Body row that used it,** without a
+   > warning. After step 1, check that the `full_name` row is there, and add it if
+   > it isn't.
+
+5. Click **Save** at the top of the modal. **Make API Call** would send a real
+   booking, so skip it here; the end-to-end check in 7h covers it.
+
+In the agent's instructions, change the booking step that asks for a first name to:
+`Make sure you have their name and email address. If you have to ask for their
+name, ask for their full name.`
+
+**7h. Fix the reply right after booking.** The agent should say only that the
+request is in, because the real confirmation comes from the workflow's text a few
+seconds later.
+
+The reply Aloware sends right after a function runs (with **Reply to the contact
+after execution?** on) is written from the **function description**, not from the
+agent's instructions. Telling it to "send the line from your instructions" produced
+*"Booked - you'll receive a confirmation shortly."*, which claims a booking that
+hasn't happened yet. Put the exact line in the description, scoped to right after
+it runs, and keep it under 191 characters. This one is 183:
+
+```text
+Submits the booking once they agree to a call and give a day. Right after it runs, your next text is exactly: Got it, I put in the request! You'll get a confirmation text in a minute.
+```
+
+Save, re-open the function, and check the description is all there.
+
+✅ **Check:** from a phone, text the agent "Hi, I'd like to book a call with an
+advisor", pick one of the times it offers, and give a full name and an email
+HubSpot has never seen. The agent replies *"Got it, I put in the request! You'll get
+a confirmation text in a minute."*. In HubSpot, the new contact has the name split
+into first and last, the meeting is booked, and the *"You're all set for ..."*
+confirmation text arrives. Cancel the test meeting afterwards.
 
 ---
 
@@ -1892,9 +2033,20 @@ All of these were verified against a live portal. There's more detail in
   webhook trigger only enrolls an existing HubSpot contact matched on email. By
   default, Aloware doesn't create HubSpot contacts for unknown numbers (an
   unknown caller shows up in Aloware as a "No Name" contact with only a phone
-  number). Leads who came in through a HubSpot form are fine. The form trigger in
-  [section 7](#7-optional-let-brand-new-contacts-book-form-trigger) fixes the HubSpot
-  side, but the agent still needs a relay to submit that form.
+  number). Leads who came in through a HubSpot form are fine. The form trigger and
+  relay in [section 7](#7-optional-let-brand-new-contacts-book-form-trigger) remove
+  this limit.
+- **One-word names get "-" as the last name.** HubSpot's booking call refuses a
+  blank last name, so the code sends "-", and HubSpot writes it to the contact. Fix
+  it on the contact later, or have the agent ask for a full name.
+- **Custom function descriptions keep only 191 characters,** although the counter
+  says 255. The rest is cut mid-word without a warning. Re-open the function after
+  saving and read what was kept.
+- **AloAi agents can stall account-wide.** In testing, every text agent on the
+  account (including a brand-new one-line agent) enrolled contacts and never
+  replied for about an hour, then recovered on its own. Before changing your agent's
+  settings, text a minimal test agent on a truly unused line. Don't trust "Dead
+  End" on the Lines page as "unused": a line can show that and still receive texts.
 - **Aloware text agent behavior seen while testing:**
   - **Disenroll doesn't stick for an inbound agent.** A disenrolled contact is
     enrolled again on their next text. There's no setting to stop it.
@@ -1942,6 +2094,10 @@ All of these were verified against a live portal. There's more detail in
 | Invite has a Google Meet link on a phone call | A video link is attached to the page | Remove it (Step 3b) |
 | Agent tells the contact a time that doesn't match the invite | The prompt's "never state a time" rule is missing | Step 11 |
 | Booked leads still get chased | The `booked` branch is missing the Aloware disenroll | Step 9 |
+| Agent enrolls the contact ("Contact enrolled to AloAi Text Agent") but never replies | Usually Aloware's side, not your settings | Text a one-line test agent on an unused line. If it's silent too, wait or contact Aloware ([Known limitations](#10-known-limitations)) |
+| Agent says "Booked" or "You're all set" before the confirmation text | The reply after the function runs is written from the function description | Put the exact line in the description (Step 7h) |
+| Relay run shows `submit_failed_400` | Form GUID or a field name doesn't match the form | Check `FORM_GUID` and the form's fields (Steps 7b, 7f) |
+| Relay never runs | The agent still posts to the old webhook, or a Body row is missing | Step 7g |
 
 ---
 
