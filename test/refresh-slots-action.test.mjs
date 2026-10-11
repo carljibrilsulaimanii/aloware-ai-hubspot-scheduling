@@ -1,30 +1,28 @@
 /**
  * refresh-slots-action.test.mjs -- offline checks for src/refresh-slots-action.js
  * -------------------------------------------------------------------------------
- * Author:  Jibril Sulaiman
- * Created: 2026-08-19 (sanitized for publication 2026-09-28)
+ * Author:  Jibril Sulaiman (with Claude Code)
  *
- * Deploy:  Nowhere. Local only -- run with `npm test` or
- *          `node test/refresh-slots-action.test.mjs`. Needs Node 20, no install.
+ * Run:     npm test   (Node 20, no install)
  *
  * What it does:
- *   Stubs axios, runs the cache refresh, and checks what lands on the cache
- *   record: the finished sentence, per-slot date and period, no busy blocks,
- *   cleared slots on an empty calendar, and errors that never fail a workflow.
+ *   Stubs axios, runs the refresh, and checks what lands on the cache record: the offer
+ *   text, one table line per morning and afternoon, no busy blocks, no evenings, no past
+ *   times, an empty calendar, missing secrets and HubSpot errors. Then it loads
+ *   src/booking-action.js and proves that for every table line, request_booking given that
+ *   date and period books exactly the time the line shows.
  *
  * Why it exists:
- *   The agent copies these values verbatim into request_booking. If a period or
- *   date here disagrees with what the booking action re-derives, the contact is
- *   booked into a different slot than the one they picked -- silently.
+ *   The agent copies the date and period from a line into request_booking. If the cache
+ *   and the booking action disagree, a contact is booked at a different time than the one
+ *   they were offered, silently.
  */
 import assert from 'node:assert/strict';
-import Module from 'node:module';
-import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import Module, { createRequire } from 'node:module';
 
 const TZ = 'America/New_York';
-
-// Freeze "now" so the September fixtures stay in the future forever.
-const FROZEN_NOW = Date.UTC(2026, 8, 1, 12);      // 1 Sep 2026, 8:00 AM EDT
+const FROZEN_NOW = Date.UTC(2026, 9, 12, 12);      // Mon Oct 12 2026, 8:00 AM EDT
 Date.now = () => FROZEN_NOW;
 
 /* --------------------------------------------------------- axios stub ---- */
@@ -32,46 +30,50 @@ Date.now = () => FROZEN_NOW;
 let availability = {};
 let patched = null;
 let getError = null;
-let patchError = null;
+let gotUrl = '';
 
 const axiosStub = {
-  async get() {
+  async get(url) {
+    gotUrl = url;
     if (getError) throw getError;
     return { data: availability };
   },
   async patch(url, body) {
-    if (patchError) throw patchError;
     patched = { url, properties: body.properties };
     return { data: {} };
   },
 };
-
 const load = Module._load;
 Module._load = function (request, ...rest) {
   if (request === 'axios') return axiosStub;
   return load.call(this, request, ...rest);
 };
 
-const action = createRequire(import.meta.url)('../src/refresh-slots-action.js');
+const require = createRequire(import.meta.url);
+const action = require('../src/refresh-slots-action.js');
+const booking = require('../src/booking-action.js');
 const T = action.__test;
 
 process.env.HUBSPOT_BOOKING_TOKEN = 'pat-test';
-process.env.SLOT_CACHE_TYPE = 'p00000000_ai_booking_cache';
+process.env.SLOT_CACHE_TYPE = '2-00000000';
 process.env.SLOT_CACHE_ID = '9001';
 
 /* ------------------------------------------------------------ fixtures --- */
 
-// September 2026 is EDT (UTC-4).
-const et = (day, hour, min = 0) => Date.UTC(2026, 8, day, hour + 4, min);
+// October 2026 is EDT (UTC-4) until Nov 1.
+const et = (day, hour, min = 0) => Date.UTC(2026, 9, day, hour + 4, min);
 
-const SEP8_9AM  = et(8, 9);
-const SEP8_2PM  = et(8, 14);
-const SEP9_10AM = et(9, 10);
-const SEP10_3PM = et(10, 15);
-const BUSY      = et(11, 13);
+const PAST      = et(12, 7);         // before "now"
+const MON_930   = et(12, 9, 30);
+const MON_1000  = et(12, 10);        // second morning slot, must not get its own line
+const MON_1300  = et(12, 13);
+const TUE_1400  = et(13, 14);
+const TUE_1530  = et(13, 15, 30);
+const WED_1100  = et(14, 11);
+const WED_1800  = et(14, 18);        // evening, never offered
+const THU_0900  = et(15, 9);
+const BUSY      = et(16, 10);
 
-// Mirrors the live 2026-03 response, including the busy branch that carries
-// start times of its own.
 const payload = (times, busy = []) => ({
   linkAvailability: {
     linkAvailabilityByDuration: {
@@ -83,118 +85,106 @@ const payload = (times, busy = []) => ({
   },
   allUsersBusyTimes: [{ busyTimes: busy.map(t => ({ start: t, end: t + 3600000 })) }],
 });
+const ALL = [PAST, MON_930, MON_1000, MON_1300, TUE_1400, TUE_1530, WED_1100, WED_1800, THU_0900];
 
-const run = (inputFields = {}) =>
-  new Promise((resolve) => action.main({ inputFields }, resolve));
-
-const reset = () => {
-  availability = payload([SEP8_9AM, SEP8_2PM, SEP9_10AM, SEP10_3PM], [BUSY]);
+const run = (inputFields = {}) => new Promise((resolve) => action.main({ inputFields }, resolve));
+const reset = (times = ALL, busy = [BUSY]) => {
+  availability = payload(times, busy);
   patched = null;
   getError = null;
-  patchError = null;
 };
 
 let out;
 
-/* -------------------------------------------- the agent reads, not parses */
+/* ---------------------------------------------------------- happy path --- */
 
 reset();
 out = (await run({ timezone: TZ })).outputFields;
-
 assert.equal(out.refresh_status, 'ok');
-assert.equal(out.slot_count, 3);
-assert.match(patched.url, /p00000000_ai_booking_cache\/9001$/);
+assert.match(patched.url, /\/crm\/v3\/objects\/2-00000000\/9001$/);
+assert.match(gotUrl, /availability-page\/your-team%2Fai-booked-call$/);
 
 const p = patched.properties;
+assert.equal(
+  p.slot_table,
+  [
+    'Mon Oct 12 at 9:30 AM EDT = 2026-10-12 morning',
+    'Mon Oct 12 at 1:00 PM EDT = 2026-10-12 afternoon',
+    'Tue Oct 13 at 2:00 PM EDT = 2026-10-13 afternoon',
+    'Wed Oct 14 at 11:00 AM EDT = 2026-10-14 morning',
+    'Thu Oct 15 at 9:00 AM EDT = 2026-10-15 morning',
+  ].join('\n'),
+  'one line per day and period, first opening only, no evening, no past, no busy'
+);
+assert.equal(p.slot_table_count, '5');
+assert.equal(out.slot_table_count, 5);
 
-// A finished sentence, so the agent never composes one.
 assert.equal(
   p.slot_offer_text,
-  'I have Tue Sep 8 at 9:00 AM EDT, Wed Sep 9 at 10:00 AM EDT, or Thu Sep 10 at 3:00 PM EDT. Which works best?'
+  'I have Mon Oct 12 at 9:30 AM EDT, Tue Oct 13 at 2:00 PM EDT, or Wed Oct 14 at 11:00 AM EDT. Which works best for you?'
 );
-
-// Each slot carries what request_booking wants, so the agent copies rather than
-// deriving a date from a spoken label.
-assert.equal(p.slot_1_label, 'Tue Sep 8 at 9:00 AM EDT');
-assert.equal(p.slot_1_date, '2026-09-08');
-assert.equal(p.slot_1_period, 'morning');
-
-assert.equal(p.slot_2_date, '2026-09-09');
-assert.equal(p.slot_2_period, 'morning');
-
-assert.equal(p.slot_3_date, '2026-09-10');
-assert.equal(p.slot_3_period, 'afternoon');
-
+assert.equal(p.slot_count, '3');
 assert.match(p.slot_refreshed_at, /^\d{4}-\d{2}-\d{2}T/);
 
-/* --------------------------------- busy blocks are never offered as slots */
+// Every offered time is also a table line, so the agent can find its date and period.
+for (const label of p.slot_offer_text.replace(/^I have |\. Which works best for you\?$/g, '').split(/, or |, /)) {
+  assert.ok(p.slot_table.split('\n').some(l => l.startsWith(label + ' = ')), 'offered time missing from table: ' + label);
+}
 
-assert.ok(!Object.values(p).includes(T.shortLabel(BUSY, TZ)), 'a busy block must never be offered');
-assert.deepEqual(
-  T.collectStarts(T.readByDuration(payload([SEP8_9AM], [BUSY]))),
-  [SEP8_9AM],
-  'only real openings survive the walk'
-);
+/* ------------------- the booking action books exactly the time each line shows */
 
-/* ------------------------------------- offers land on three distinct days */
+const openForBooking = ALL.filter(t => t > FROZEN_NOW).sort((a, b) => a - b);
+for (const line of p.slot_table.split('\n')) {
+  const [label, rest] = line.split(' = ');
+  const [date, period] = rest.split(' ');
+  const booked = booking.__test.chooseSlot(openForBooking, date, period, TZ);
+  assert.equal(T.shortLabel(booked, TZ), label, 'request_booking(' + date + ', ' + period + ') books a different time');
+}
 
-const sameDay = [et(8, 9), et(8, 10), et(8, 11), et(9, 9), et(10, 9)];
-assert.deepEqual(
-  T.spreadAcrossDays(sameDay, 3, TZ).map(t => T.dateKey(t, TZ)),
-  ['2026-09-08', '2026-09-09', '2026-09-10']
-);
+// Same calendar in both files.
+const bookingSrc = fs.readFileSync(new URL('../src/booking-action.js', import.meta.url), 'utf8');
+assert.equal(bookingSrc.match(/const MEETING_SLUG = '([^']+)'/)[1], T.MEETING_SLUG, 'MEETING_SLUG must match booking-action.js');
 
-/* ---------------------- periods match what request_booking will re-derive */
+/* ------------------------------------------------------- empty calendar --- */
 
-assert.equal(T.periodOf(et(8, 9), TZ), 'morning');
-assert.equal(T.periodOf(et(8, 12), TZ), 'afternoon', 'noon is afternoon, matching the booking action');
-assert.equal(T.periodOf(et(8, 16), TZ), 'afternoon');
-assert.equal(T.periodOf(et(8, 18), TZ), 'evening');
+reset([], []);
+out = (await run()).outputFields;
+assert.equal(out.refresh_status, 'ok');
+assert.equal(patched.properties.slot_table, 'NONE');
+assert.equal(patched.properties.slot_count, '0');
+assert.match(patched.properties.slot_offer_text, /reach out to you directly/);
 
-/* ------------------------------------------- an empty calendar still says so */
+/* -------------------------------------------- errors never fail a workflow --- */
 
 reset();
-availability = payload([]);
-out = (await run({ timezone: TZ })).outputFields;
-assert.equal(out.slot_count, 0);
-assert.match(patched.properties.slot_offer_text, /don't have anything open/);
-assert.equal(patched.properties.slot_1_label, '', 'stale slots are cleared, not left behind');
-assert.equal(patched.properties.slot_1_date, '');
+getError = Object.assign(new Error('boom'), { response: { data: { message: 'rate limited' } } });
+out = (await run()).outputFields;
+assert.equal(out.refresh_status, 'error');
+assert.match(out.error_detail, /rate limited/);
+assert.equal(patched, null, 'nothing written when availability fails');
 
-/* ------------------------------------------ HubSpot's timezone slug form */
+delete process.env.HUBSPOT_BOOKING_TOKEN;
+reset();
+out = (await run()).outputFields;
+assert.equal(out.refresh_status, 'error');
+assert.match(out.error_detail, /HUBSPOT_BOOKING_TOKEN/);
+process.env.HUBSPOT_BOOKING_TOKEN = 'pat-test';
 
+// Without the override secrets, the built-in object and record ids are used.
+delete process.env.SLOT_CACHE_TYPE;
+delete process.env.SLOT_CACHE_ID;
+reset();
+await run();
+assert.match(patched.url, /\/crm\/v3\/objects\/REPLACE_WITH_TYPE_ID\/REPLACE_WITH_RECORD_ID$/);
+process.env.SLOT_CACHE_TYPE = '2-00000000';
+process.env.SLOT_CACHE_ID = '9001';
+
+/* ----------------------------------------------------------- timezones --- */
+
+assert.equal(T.resolveTimezone('america_slash_chicago'), 'America/Chicago');
+assert.equal(T.resolveTimezone('not a zone'), 'America/New_York');
 reset();
 await run({ timezone: 'america_slash_chicago' });
-assert.match(patched.properties.slot_offer_text, /CDT/, 'converts the slug rather than throwing');
-
-reset();
-await run({ timezone: 'nonsense_value' });
-assert.match(patched.properties.slot_offer_text, /EDT/, 'falls back rather than failing');
-
-/* ------------------------------- a stale cache must never break a workflow */
-
-reset();
-getError = new Error('ETIMEDOUT');
-out = (await run({ timezone: TZ })).outputFields;
-assert.equal(out.refresh_status, 'error');
-assert.match(out.error_detail, /ETIMEDOUT/);
-
-reset();
-patchError = Object.assign(new Error('403'), {
-  response: { status: 403, data: { message: 'missing scope' } },
-});
-out = (await run({ timezone: TZ })).outputFields;
-assert.equal(out.refresh_status, 'error');
-assert.match(out.error_detail, /missing scope/, 'says what to fix');
-
-/* ------------------------------------------------ configuration is checked */
-
-const savedType = process.env.SLOT_CACHE_TYPE;
-delete process.env.SLOT_CACHE_TYPE;
-reset();
-out = (await run({ timezone: TZ })).outputFields;
-assert.equal(out.refresh_status, 'error');
-assert.match(out.error_detail, /SLOT_CACHE_TYPE/, 'names the missing setting');
-process.env.SLOT_CACHE_TYPE = savedType;
+assert.match(patched.properties.slot_table.split('\n')[0], /^Mon Oct 12 at 8:30 AM CDT = 2026-10-12 morning$/);
 
 console.log('refresh-slots-action: all checks passed');

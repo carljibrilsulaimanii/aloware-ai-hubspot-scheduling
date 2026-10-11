@@ -51,12 +51,13 @@ and any reminder sequences you already run on meetings fire as normal.
    - [Step 13: Go live and watch the first day](#step-13-go-live-and-watch-the-first-day)
    - [Step 14: Change the meeting link later](#step-14-change-the-meeting-link-later)
 6. [Optional: let the agent offer real times](#6-optional-let-the-agent-offer-real-times)
-7. [Reference: inputs, outputs and settings](#7-reference-inputs-outputs-and-settings)
-8. [HubSpot behavior the docs won't tell you](#8-hubspot-behavior-the-docs-wont-tell-you)
-9. [Known limitations](#9-known-limitations)
-10. [Troubleshooting](#10-troubleshooting)
-11. [Testing locally](#11-testing-locally)
-12. [Security](#12-security)
+7. [Optional: let brand-new contacts book (form trigger)](#7-optional-let-brand-new-contacts-book-form-trigger)
+8. [Reference: inputs, outputs and settings](#8-reference-inputs-outputs-and-settings)
+9. [HubSpot behavior the docs won't tell you](#9-hubspot-behavior-the-docs-wont-tell-you)
+10. [Known limitations](#10-known-limitations)
+11. [Troubleshooting](#11-troubleshooting)
+12. [Testing locally](#12-testing-locally)
+13. [Security](#13-security)
 
 ---
 
@@ -158,11 +159,12 @@ an integration that has to write meeting types back into HubSpot.
 | **An approved 10DLC campaign** on the Aloware line (for SMS) | Until it's approved, Aloware blocks outbound SMS. The text agent's replies fail with *"Messaging is disabled for this line"*, and a yellow banner shows at the top of Aloware. Voice agents don't need it. |
 | **HubSpot Sales Hub** seat tier that allows another scheduling page | A free tier gets one booking page. A second one shows *"You've used your 1 free booking page"* and an upgrade prompt. |
 | The **Aloware ↔ HubSpot integration** installed | This syncs contacts, and it adds Aloware's actions to HubSpot workflows |
-| **Connected calendars** for every rep in the round-robin pool | A disconnected calendar makes bookings silently vanish. See [section 8](#8-hubspot-behavior-the-docs-wont-tell-you). |
+| **Connected calendars** for every rep in the round-robin pool | A disconnected calendar makes bookings silently vanish. See [section 9](#9-hubspot-behavior-the-docs-wont-tell-you). |
 | **Node.js 20** on your computer | Optional. Only needed to run the tests and demo locally. |
 
 **Time:** about four hours for Steps 1–13, plus about two hours for the optional
-[section 6](#6-optional-let-the-agent-offer-real-times).
+[section 6](#6-optional-let-the-agent-offer-real-times) and 45 minutes for the HubSpot half of
+the optional [section 7](#7-optional-let-brand-new-contacts-book-form-trigger).
 
 ---
 
@@ -171,7 +173,7 @@ an integration that has to write meeting types back into HubSpot.
 ```
 src/
   booking-action.js           HubSpot custom code action: reads availability, books, returns a status
-  refresh-slots-action.js     Optional: writes the next 3 openings to a CRM record the agent can read
+  refresh-slots-action.js     Optional: writes the open times (next 3, plus a two-week table) to a CRM record the agent can read
 test/
   booking-action.test.mjs     Offline tests with HubSpot stubbed; every branch
   refresh-slots-action.test.mjs
@@ -707,7 +709,8 @@ Click through to finish the wizard.
 > contact whose Email exactly matches. If no contact has that email, HubSpot
 > returns the same `202 Accepted`, and nothing appears in the workflow history.
 > By default Aloware doesn't create HubSpot contacts for new numbers, so a first
-> text from a stranger books nothing. See [Known limitations](#9-known-limitations).
+> text from a stranger books nothing. See [section 7](#7-optional-let-brand-new-contacts-book-form-trigger)
+> and [Known limitations](#10-known-limitations).
 
 **7f. Check the trigger card.** You're back in the workflow editor. The trigger
 card now reads *"[your webhook name] has been completed any number of times
@@ -1161,7 +1164,7 @@ Schema for **Parameters**:
 
 `email` is required because HubSpot matches the webhook on it. The agent takes it
 from **Context → Contact Information**, never by asking aloud. If the caller has no
-email on file, nothing can be booked (see [Known limitations](#9-known-limitations)).
+email on file, nothing can be booked (see [Known limitations](#10-known-limitations)).
 Remove `"evening"` from the enum if your calendar doesn't run evenings.
 
 > ⚠️ **The prompt matters more than the checkbox.** Without the "do not state a
@@ -1444,178 +1447,359 @@ meeting type = AI Booked Call**.
 *About 2 hours.*
 
 Without this upgrade, the agent can only ask *"which day suits you?"* When someone
-reasonably asks *"well, what's available?"* before booking, it has nothing to say.
+asks *"what times do you have?"*, or gives a range like *"any afternoon next week"*,
+it has nothing real to say.
 
 **Do you need it?**
 
-| | Real times when their pick is full | Real times on demand ("what's open?") |
-|---|---|---|
-| **Step 9 branches** (needed anyway) | ✅ texted back via `slot_taken` | ✗ |
-| **This cache** | ✅ | ✅ |
+| | Real times when their pick is full | Real times on demand ("what's open?") | Times inside a range ("Tuesday or Wednesday morning") |
+|---|---|---|---|
+| **Step 9 branches** (needed anyway) | ✅ texted back via `slot_taken` | ✗ | ✗ |
+| **This cache** | ✅ | ✅ | ✅ |
 
-On SMS, the branches already get real times to the contact one exchange later.
-On voice there's no way back after the call, so this is the *only* way a voice
-agent can ever state a time. Build the branches first, run it for a while, and
-build this only if people keep asking to see options first.
-
-**Why a cache:** the webhook trigger returns `202` with no data, so the agent
-can't get an answer back from the workflow. Instead, a second action pre-computes
-the next three openings onto **one HubSpot record**. A second Custom Function
+**Why a cache:** the webhook trigger returns `202` with no data, so the agent can't
+get an answer back from the workflow mid-conversation. Instead, a second action
+pre-computes the openings onto **one HubSpot record**, and a second Custom Function
 reads that record straight from the HubSpot CRM API, which *is* synchronous. The
-agent reads a finished sentence aloud and copies the chosen slot's date and period
-into `request_booking`, so it never does any time math.
+record holds two things:
 
-> None of this section was captured on screen in the original build. The code was
-> built and tested offline. HubSpot and Aloware labels here are described rather
-> than quoted (wording may differ).
+- `slot_offer_text`: a finished sentence with the next three openings on three
+  different days.
+- `slot_table`: one line for every morning and afternoon that has an opening, for
+  every day the link shows (about two weeks), like
+  `Tue Oct 13 at 2:00 PM EDT = 2026-10-13 afternoon`.
 
-**6a. Create the cache record in HubSpot.**
-1. Go to **Settings → Data Management → Objects → Custom Objects** and create an
-   object, for example `AI Booking Cache`.
-2. Add these properties, **all Single-line text**, including the dates:
+The agent offers the part before the `=` word for word, and copies the part after it
+into `request_booking`. Each line is the **first** opening in that morning or
+afternoon, which is exactly the slot `booking-action.js` books for that date and
+period, so the time offered is the time booked. The test proves it for every line.
 
-   | Property | Example value |
+> Built and run on an Aloware **text** agent. A voice agent wasn't tested with this
+> cache.
+
+**6a. Create the cache object and its one record.**
+1. In HubSpot, go to **Settings → Data Management → Data Model**, click **Create
+   object**, and choose **Custom object**.
+2. **Singular name** e.g. `AI Open Time`, **Plural name** `AI Open Times`,
+   **Primary display property** `Name`. Create it.
+3. Add these five properties. Check each **internal name** before saving; the code
+   writes these exact names:
+
+   | Internal name | Field type |
    |---|---|
-   | `slot_offer_text` | `I have Tue Sep 8 at 9:00 AM EDT, Wed Sep 9 at 10:00 AM EDT, or Thu Sep 10 at 3:00 PM EDT. Which works best?` |
-   | `slot_1_label`, `slot_2_label`, `slot_3_label` | `Tue Sep 8 at 9:00 AM EDT` |
-   | `slot_1_date`, `slot_2_date`, `slot_3_date` | `2026-09-08` (**text, not Date**, same reason as Step 7d) |
-   | `slot_1_period`, `slot_2_period`, `slot_3_period` | `morning` |
-   | `slot_count` | `3` |
-   | `slot_refreshed_at` | `2026-09-01T12:00:00.000Z` |
+   | `slot_offer_text` | Multi-line text |
+   | `slot_table` | Multi-line text |
+   | `slot_count` | Single-line text |
+   | `slot_table_count` | Single-line text |
+   | `slot_refreshed_at` | Single-line text |
 
-3. Create **one** record in the object. Availability is the same for everyone on a
-   round-robin link, so one record serves every conversation.
-4. Note the object's **type id** (like `p12345678_ai_booking_cache` or
-   `2-12345678`) and the record's **id**, and put both in your scratch note.
+4. Create **one** record and name it, e.g. `Open Times`. Availability is the same
+   for everyone on a round-robin link, so one record serves every conversation.
+5. Open the record and copy two numbers from the page URL: the object **type id**
+   (starts with `2-`) and the **record id** (the last number). Put both in your
+   scratch note.
 
-> ⚠️ **Text, not Date.** A date-typed `slot_1_date` gets reformatted, and
-> `request_booking` compares `2026-09-08` as literal text. The contact silently
-> gets a different day than the one they picked.
+> ⚠️ **Text, not Date or Number.** Every property is text. A Date property
+> reformats the value, and the agent would copy the wrong day into the booking.
 
-**6b. Give the booking key access to the cache.** Open the Step 4 service key,
-click **Edit**, and add the **read** and **write** scopes for your custom object
-(named like `crm.objects.custom.read` / `crm.objects.custom.write`; wording may
-differ). Save. The key value doesn't change.
+> ⚠️ **One record only.** The workflow and the Aloware function both point at one
+> record id. A second record is never updated.
 
-**6c. Build the refresh workflow.**
-1. **Automation → Workflows → Create workflow → From scratch**, and name it
-   `AI Booking — Refresh Slots`. Use the scheduled trigger (*"Based on a
-   schedule"*, Data Hub Professional), at least daily.
-2. Add a **Custom code** action, **Node.js 20.x**.
-3. **Secrets:** tick `HUBSPOT_BOOKING_TOKEN`, then use **Add secret** to create
-   **`SLOT_CACHE_TYPE`** (the type id) and **`SLOT_CACHE_ID`** (the record id), and
-   tick both.
-4. **Property to include in code:** optional. `timezone` sets the zone the labels
-   are written in. Leave it out to use `DEFAULT_TZ`.
+✅ **Check:** the object shows one record with the five properties empty.
+
+**6b. Give the booking key access to the cache.** Open the Step 4 service key, click
+**Edit**, add **`crm.objects.custom.read`** and **`crm.objects.custom.write`**, and
+**Save**. The key value doesn't change, so nothing else breaks.
+
+> ⚠️ **Skip this and the refresh half-works.** It reads the calendar fine, then the
+> write fails with *"This app hasn't been granted all required scopes to make this
+> call"*, listing `crm.objects.custom.write` among the required scopes.
+
+**6c. Build the refresh workflow.** *About 20 minutes.*
+1. **Automation → Workflows → Create workflow → From scratch**, choose your cache
+   object, and name it `AI Booking — Refresh Slots`.
+2. **Trigger:** **On a schedule**, **Daily**. For a daily schedule HubSpot only
+   offers a time window (for example, between 12:00 AM and 10:00 AM), not an exact
+   time.
+3. Under **Only enroll … that meet these conditions**, add **Name** *is equal to
+   any of* your record's name. Scheduled triggers re-enroll on every run, so
+   there's nothing to switch on. Save the trigger.
+4. Add a **Custom code** action, **Node.js 20.x**. Under **Secrets**, tick
+   `HUBSPOT_BOOKING_TOKEN`.
 5. **Code:** delete the sample code and paste in **all** of
-   [`src/refresh-slots-action.js`](src/refresh-slots-action.js). Its `MEETING_SLUG` must be exactly the same as
-   in `booking-action.js` (Step 6), or the agent offers times it can't then book.
-6. **Data outputs:**
+   [`src/refresh-slots-action.js`](src/refresh-slots-action.js). Then edit three
+   constants near the top:
+
+   | Constant | Set to |
+   |---|---|
+   | `MEETING_SLUG` | Exactly the same slug as in `booking-action.js` (Step 6), or the agent offers times from one calendar and books another |
+   | `SLOT_CACHE_TYPE` | The type id from 6a, e.g. `2-12345678` |
+   | `SLOT_CACHE_ID` | The record id from 6a |
+
+   (Secrets named `SLOT_CACHE_TYPE` / `SLOT_CACHE_ID` override the constants if you
+   prefer not to edit the code.)
+6. **Property to include in code:** none needed. An optional `timezone` input sets
+   the zone the labels are written in; without it, `DEFAULT_TZ` is used.
+7. **Data outputs:**
 
    | Output | Type |
    |---|---|
    | `refresh_status` | String |
    | `slot_count` | Number |
+   | `slot_table_count` | Number |
    | `slot_offer_text` | String |
    | `error_detail` | String |
 
-7. **Save**, then **Test action** with any contact.
+8. **Save**, then open **Test action**, pick your record, and click **Test**.
 
-✅ **Check:** **Status** is *Success*, `refresh_status` is `ok`, `slot_count` is
-`3` (or fewer if the link has fewer openings), and the cache record in HubSpot now
-holds a sentence you'd be happy to hear read aloud.
+✅ **Check:** `hs_execution_state` is `SUCCESS`, `refresh_status` is `ok`,
+`slot_count` is `3` (fewer if the link has fewer openings), `slot_table_count` is the
+number of open mornings and afternoons, and the record now shows lines like
+`Mon Oct 12 at 9:00 AM EDT = 2026-10-12 morning`.
 
-8. **Review and turn on** the workflow.
-9. Refresh from two more places, because each covers a different gap:
-   - **After every booking:** add the same custom code action (same secrets, same
-     outputs) at the end of the `booked` branch from Step 9, so the slot just taken
-     stops being offered.
-   - **When a conversation opens (optional):** give a copy of this workflow a
-     webhook trigger (Step 7), and have the agent call it before it asks any
-     questions.
+9. **Review and turn on** the workflow.
+10. Optional: add the same custom code action (same secret, constants and outputs) as
+    the last action of the `booked` branch from Step 9, so a time that was just
+    booked stops being offered before the next daily run.
 
 **6d. Create a separate read-only key.** In **Service Keys**, create a second key,
-e.g. `AI Booking Cache Read`, with only the **read** scope for your custom object.
-This key will sit in an Aloware header outside HubSpot, so if it leaks, the worst
-case is someone learning when your team is free. **Don't** reuse the booking key
-here.
+e.g. `AI Booking Cache Read`, with only **`crm.objects.custom.read`**. This key sits
+in an Aloware header outside HubSpot, so if it leaks, the worst case is someone
+learning when your team is free. **Don't** reuse the booking key here: it can write
+contacts.
 
-**6e. Add the second Aloware custom function.** It's a plain GET that takes no
-variables. The URL, with the properties list built in, is:
+**6e. Add the `get_available_times` custom function** (text agent). In Aloware, open
+the agent → **Custom Functions** → **Create Custom Function**:
 
-```
-https://api.hubapi.com/crm/v3/objects/<type id>/<record id>?properties=slot_offer_text,slot_1_label,slot_1_date,slot_1_period,slot_2_label,slot_2_date,slot_2_period,slot_3_label,slot_3_date,slot_3_period
-```
+| Setting | Value |
+|---|---|
+| **Function name** | `get_available_times` |
+| **Function description** | `Use when the contact asks what times are open, or gives a range of days or times they are free. Returns the current open times.` |
+| **Reply to the contact during execution?** | Off |
+| **Reply to the contact after execution?** | On |
+| **Variables** | None |
+| **Endpoint** tab | **GET** `https://api.hubapi.com/crm/v3/objects/<type id>/<record id>` (nothing after the record id) |
+| **Query Parameters** tab | One row: Type **Static**, Name `properties`, Value `slot_offer_text,slot_table` |
+| **Headers** tab | Name `Authorization`, Value `Bearer ` followed by the 6d key |
 
-The header is `Authorization: Bearer <read-only key from 6d>`.
+Click **Initialize custom function**, then **Make API Call**. You should see *"API
+call was successful! Now, you can map the response fields to be used during the
+conversation."*
 
-| Setting | Text agent (Create Custom Function) | Voice agent (Custom Function) |
-|---|---|---|
-| Name | **Function name:** `get_available_times` | **Name:** `get_available_times` |
-| Description | **Function description:** `Use when the contact asks what times are available, or before offering times. Returns the current openings.` | **Description:** same text |
-| Replies | **Reply to the contact after execution?** On | **Speak After Execution** checked |
-| Variables / parameters | None | **Parameters:** empty |
-| Method and URL | **Endpoint** tab: **GET** and the full URL above | **API Endpoint:** **GET** and the URL without `?properties=…`; add `properties` = the comma list under **Query Parameters** |
-| Auth | **Headers** tab: `Authorization` = `Bearer …` | **Headers:** `Authorization` = `Bearer …` |
-| Test | **Initialize custom function**, then **Make API Call** | **Test Function → Send Test Request** |
-| Response | Under **Map the API response fields to be used in the conversation**, **+ Add response mapping** for each field below | **Response Variables:** **+ New key value pair** for each field below (JSONPath) |
+Under **Map the API response fields to be used in the conversation**, click **+ Add
+response mapping** twice:
 
-**Response fields to map:**
+| Name | Value |
+|---|---|
+| `offer_text` | `properties.slot_offer_text` |
+| `slot_table` | `properties.slot_table` |
 
-```text
-offer_text     $.properties.slot_offer_text
-slot_1_label   $.properties.slot_1_label
-slot_1_date    $.properties.slot_1_date
-slot_1_period  $.properties.slot_1_period
-slot_2_label   $.properties.slot_2_label
-slot_2_date    $.properties.slot_2_date
-slot_2_period  $.properties.slot_2_period
-slot_3_label   $.properties.slot_3_label
-slot_3_date    $.properties.slot_3_date
-slot_3_period  $.properties.slot_3_period
-```
+Then **Save**.
 
-On a **text agent**, the mapping's **Value** is a dropdown of fields from the test
-response, so run **Make API Call** first and then pick
-`properties.slot_offer_text` and the rest. On a **voice agent**, type the JSONPath
-as shown.
+> ⚠️ **Don't put `?properties=` in the URL.** Aloware drops it. The call still says
+> successful, but the response only has HubSpot's default fields, and the mapping
+> dropdown shows only `properties.hs_createdate`, `properties.hs_lastmodifieddate`
+> and `properties.hs_object_id`. Use the **Query Parameters** tab. The parameter is
+> **one** row named `properties` with both names comma-separated in the value, not
+> one row per field.
 
-✅ **Check:** the test response is **200** and its body has a `properties` object
-holding your cache sentence.
+✅ **Check:** after **Make API Call**, the mapping dropdown lists
+`properties.slot_offer_text` and `properties.slot_table`.
 
-**6f. Add to the prompt,** and on a text agent insert a `get_available_times` chip
-with **+ Add Action** at step 1 (Step 11b):
+**6f. Tell the agent how to use it.** Add this to the instructions, then, in the
+Instructions editor, use **Add Action → Custom Function → `get_available_times`** to
+insert its chip right under the heading. Aloware inserts the chip at the cursor, or
+at the very top if the box wasn't focused, so check where it landed and move it if
+needed.
 
 ```text
-When the contact wants to book, or asks what times are available:
+IF YOU HAVE THE get_available_times FUNCTION
 
-1. Call get_available_times.
-2. Read offer_text back to them exactly as written. Do not
-   rephrase the times, convert them, or add any of your own.
-3. When they pick one, call request_booking using the date and
-   period belonging to the slot they chose -- slot_1_date and
-   slot_1_period for the first, and so on.
-4. If none of the three suit them, ask which day would, and call
-   request_booking with that day instead.
+It gives you two things. offer_text is a ready-made text with the next three
+openings. slot_table has one line for every open morning and afternoon over
+about the next two weeks, written like this:
+Tue Oct 13 at 2:00 PM EDT = 2026-10-13 afternoon
 
-Only ever offer the times get_available_times returned. If it
-returns nothing, say you don't have the calendar in front of you
-and ask which day suits them.
+NEVER OFFER MORE THAN THREE TIMES IN ONE MESSAGE. slot_table is for you to
+search, not to send. Never paste it.
+
+When someone asks what times are open, asks to book, or you are offering a
+call, and they gave no range, call get_available_times and send offer_text
+exactly as written, word for word.
+
+When someone gives a range, such as "any afternoon next week", "Tuesday or
+Wednesday", "mornings after the 15th" or "early next week", call
+get_available_times, pick at most three lines in slot_table inside their
+range (spread across different days when you can), and offer them in one
+sentence using the part before the "=" exactly as written, for example:
+"I have Tue Oct 13 at 2:00 PM EDT or Wed Oct 14 at 1:00 PM EDT. Which works
+best for you?" Never change a time, never offer one that is not in
+slot_table, and never show the "=" part.
+
+If no line fits their range, say so and send offer_text instead. If
+slot_table says NONE, say you don't have the calendar in front of you and ask
+which day works for them.
+
+When they pick one, use that line's date and period, the part after the "="
+(2026-10-13 and afternoon in the example), and call request_booking with them.
 ```
 
-Remove the "You cannot see the calendar" paragraph from the Step 11 prompt, since
-it's no longer true.
+If the agent also sends your booking link anywhere in its instructions, tell it to
+offer times instead whenever `get_available_times` is available, and to send the link
+only if the function fails, the table says `NONE`, or the person asks for the link.
+
+Also delete the line *"You cannot see the calendar and cannot list specific available
+times."* from the Step 11 prompt, since it's no longer true.
+
+> ⚠️ **The "never more than three" line matters.** Without it, a range request got
+> all five matching afternoons back as a list, and a later "book a call" got all ten
+> open slots.
+
+> ⚠️ **Instruction changes only reach new conversations.** Aloware keeps the
+> instructions a conversation started with. To test a change, disenroll your test
+> contact from the agent first (contact → AloAi Agent Enrollments → **Disenroll**),
+> then text again.
 
 **Stale offers are safe.** `request_booking` always re-reads live availability
-before it books, so a slot that was taken in the meantime comes back as
-`slot_taken` with three fresh alternatives, never a double booking.
+before it books, so a slot taken in the meantime comes back as `slot_taken` with
+three fresh alternatives, never a double booking.
 
-✅ **Check:** text the agent "what times are available?" It should read the cache
-sentence word for word, and picking one should book exactly that slot.
+✅ **Check:** text the agent *"what times do you have?"*: it should send
+`slot_offer_text` word for word. Then *"any afternoon next week?"*: up to three
+afternoon times from the table, worded exactly as on the record.
 
 ---
 
-## 7. Reference: inputs, outputs and settings
+## 7. Optional: let brand-new contacts book (form trigger)
+
+*About 45 minutes for the HubSpot half.*
+
+The Step 7 webhook trigger only enrolls a contact HubSpot **already has** with that
+exact email. Someone who texts in cold, gives a new email, or makes a typo gets
+*"I put in the request"* from the agent and no booking: no run, no error, nothing
+in the history. You can't rely on the Aloware sync to fix it either; it doesn't
+push every Aloware contact into HubSpot.
+
+A HubSpot **form submission** has no such limit: it creates the contact if the
+email is new, updates it if not, and can start the same workflow. This section
+swaps the trigger to a form.
+
+> ⚠️ **Read the limit before you build this.** The HubSpot half below was built
+> and verified: a form submission for a brand-new email created the contact,
+> booked the meeting on the round robin, and texted the confirmation back within
+> a minute. **The Aloware half is not solved.** An Aloware Custom Function can't
+> submit a HubSpot form (see 7e). Swapping the trigger also means the Step 10
+> webhook call no longer enrolls anyone. Only switch once you have something that
+> submits the form for the agent, or keep this workflow on the webhook and use the
+> form for your own sources (a web form, another tool).
+
+**7a. Create three contact properties.** In **Settings → Data Management →
+Properties**, choose **Contact properties** and click **Create property** for each:
+
+| Internal name | Field type | Holds |
+|---|---|---|
+| `aloai_preferred_date` | Single-line text | `YYYY-MM-DD` |
+| `aloai_preferred_period` | Single-line text | `morning` or `afternoon` |
+| `aloai_booking_timezone` | Single-line text | An IANA zone, e.g. `America/New_York` |
+
+> ⚠️ **Single-line text, not Date.** Same trap as Step 7d: a Date property
+> reformats `2026-10-13`, and the code books the next open day instead of the one
+> they asked for.
+
+✅ **Check:** the three properties show up when you search `aloai` on the
+Properties page.
+
+**7b. Create the form.** In **Marketing → Forms**, create a classic (legacy) form
+*(wording may differ)*, e.g. `AI Booking Contact Creation`, with these fields:
+
+| Field | Required | Notes |
+|---|---|---|
+| Email | Yes | The form finds or creates the contact by this |
+| First name | No | |
+| Last name | No | |
+| Phone number | No | Use HubSpot's phone number field type |
+| `aloai_preferred_date` | No | Hidden |
+| `aloai_preferred_period` | No | Hidden |
+| `aloai_booking_timezone` | No | Hidden |
+
+Publish it, then copy the form's **GUID** from the form editor's URL (the long id
+with dashes) and your **portal id** (the number in any HubSpot URL) into your
+scratch note.
+
+**7c. Swap the workflow's trigger.** Open `AI Booking — Book Meeting`:
+1. Click the trigger card, then **Edit or add** on the trigger group.
+2. Remove the webhook event and add **Form submission**: **Form name** *is any of*
+   your new form. Click **Done**, then **Save**.
+3. Check the trigger card still reads **Re-enroll on**. Without it, a contact who
+   books once can never book again.
+
+**7d. Remap the custom code inputs.** Open the Step 8 custom code action. The
+webhook tokens are gone, so every row that used them now shows *"Property
+selection is required"*. Point each row at the **Enrolled contact** property
+instead:
+
+| Input name | Token (Enrolled contact) |
+|---|---|
+| `first_name` | *First Name* |
+| `last_name` | *Last Name* |
+| `email` | *Email* |
+| `phone` | *Phone Number* |
+| `timezone` | *IP Timezone* |
+| `timezone_agent` | `aloai_booking_timezone` |
+| `preferred_date` | `aloai_preferred_date` |
+| `preferred_period` | `aloai_preferred_period` |
+
+Delete the `phone_agent` row; the code falls back to `phone`. Save the action and
+the workflow.
+
+> ⚠️ **The trash icon sits right next to the property picker.** It's easy to
+> delete a row while reaching for **Select a property**. Read every row before you
+> save.
+
+✅ **Check:** submit the form directly for a brand-new email, with a date that has
+an opening. Bash, macOS or Git Bash, with your ids pasted in:
+
+```bash
+curl -i -X POST "https://forms.hubspot.com/uploads/form/v2/<portal id>/<form guid>" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "email=new-lead@example.com" \
+  --data-urlencode "firstname=Alex" \
+  --data-urlencode "phone=+15550100123" \
+  --data-urlencode "aloai_preferred_date=2026-10-13" \
+  --data-urlencode "aloai_preferred_period=morning" \
+  --data-urlencode "aloai_booking_timezone=America/New_York"
+```
+
+HubSpot answers `204`. Within a minute the new contact exists, the workflow's
+history shows a run with `booking_status` `booked`, the meeting is on a rep's
+calendar, and (if Step 9's text action is set up) the confirmation text goes to
+the phone number. Cancel the test meeting afterwards.
+
+**7e. Why the agent can't submit the form itself.** Every one of these was tried
+from an Aloware text agent's Custom Function:
+
+- **Aloware always sends a flat JSON body**, whatever `Content-Type` header you
+  set. HubSpot's v2 form endpoint (the one in the check above) reads only
+  form-encoded fields. Sent JSON with a form-encoded header, it still answers
+  `204` and reads nothing, so no contact is created. Sent JSON honestly, it
+  answers `415`.
+- **HubSpot's v3 submit endpoint** (`api.hsforms.com/submissions/v3/integration/submit/...`)
+  takes JSON, but needs a nested `fields` array of `{ name, value }` objects. The
+  Custom Function body is flat key/value rows only.
+- **Variables can't go in the URL.** Putting `{email}` and the rest in a query
+  string is refused on save with *"The url format is invalid."* A POST function
+  has no **Query Parameters** tab, and the URL is capped at 255 characters.
+- **"API call was successful!" proves nothing.** Aloware shows it for every one of
+  the attempts above. Always check HubSpot for the contact.
+
+The way through is a small relay: a HubSpot workflow that isn't tied to a CRM
+record (Data Hub can build these), started by a webhook the agent posts its usual
+flat JSON to, with one custom code action that rebuilds it as a v3 form
+submission. That relay hasn't been run end to end yet, so it isn't in this repo.
+
+---
+
+## 8. Reference: inputs, outputs and settings
 
 ### Inputs to `booking-action.js`
 
@@ -1656,8 +1840,9 @@ sentence word for word, and picking one should book exactly that slot.
 | `MEETING_SLUG` | both `src` files | `your-team/ai-booked-call` | Always. It's your link. |
 | `DEFAULT_TZ` | both | `America/New_York` | Your office isn't in US Eastern |
 | `FORM_FIELDS` | `booking-action.js` | empty | Your form requires more than name and email |
-| `PERIODS` | both | 0–12 / 12–17 / 17–24 | Your idea of "afternoon" differs. Keep both files the same. |
-| `MAX_ALTS` / `SLOTS` | `booking-action.js` / `refresh-slots-action.js` | 3 | You want more or fewer alternatives |
+| `PERIODS` | both | 0–12 / 12–17 / 17–24 (the refresh file has morning and afternoon only) | Your idea of "afternoon" differs. Keep the morning and afternoon windows the same in both files. |
+| `MAX_ALTS` / `OFFER_SLOTS` | `booking-action.js` / `refresh-slots-action.js` | 3 | You want more or fewer alternatives |
+| `SLOT_CACHE_TYPE` / `SLOT_CACHE_ID` | `refresh-slots-action.js` | placeholders | Always, if you build section 6. Secrets with the same names override them. |
 | `SCHEDULER` | both | `/scheduler/2026-03/...` | The probe shows only `/v3/` answering |
 
 A `MEETING_SLUG` secret on the action overrides the constant, if you'd rather not
@@ -1665,7 +1850,7 @@ edit code.
 
 ---
 
-## 8. HubSpot behavior the docs won't tell you
+## 9. HubSpot behavior the docs won't tell you
 
 All of these were verified against a live portal. There's more detail in
 [docs/API-NOTES.md](docs/API-NOTES.md).
@@ -1701,14 +1886,25 @@ All of these were verified against a live portal. There's more detail in
 
 ---
 
-## 9. Known limitations
+## 10. Known limitations
 
 - **Brand-new contacts can't book unless they already exist in HubSpot.** The
   webhook trigger only enrolls an existing HubSpot contact matched on email. By
   default, Aloware doesn't create HubSpot contacts for unknown numbers (an
   unknown caller shows up in Aloware as a "No Name" contact with only a phone
-  number). Leads who came in through a HubSpot form are fine. Truly cold
-  inbound contacts need a contact-creation step before this works.
+  number). Leads who came in through a HubSpot form are fine. The form trigger in
+  [section 7](#7-optional-let-brand-new-contacts-book-form-trigger) fixes the HubSpot
+  side, but the agent still needs a relay to submit that form.
+- **Aloware text agent behavior seen while testing:**
+  - **Disenroll doesn't stick for an inbound agent.** A disenrolled contact is
+    enrolled again on their next text. There's no setting to stop it.
+  - **Texts that arrive while the agent's schedule is closed get no reply**, not
+    even when it reopens. The agent answers their next text. Follow-ups that fall
+    due while it's closed are skipped.
+  - **One follow-up delay applies to every attempt.** You can't set a quick first
+    nudge and a longer second one.
+  - **A conversation keeps the instructions it started with.** Edits reach new
+    conversations only.
 - **Voice is the weaker channel.** HubSpot Meetings needs an email, and a voice
   agent can't reliably collect one. Voice works for callers whose email is
   already on their record. SMS can collect it.
@@ -1725,7 +1921,7 @@ All of these were verified against a live portal. There's more detail in
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
@@ -1749,7 +1945,7 @@ All of these were verified against a live portal. There's more detail in
 
 ---
 
-## 11. Testing locally
+## 12. Testing locally
 
 No install is needed, just Node 20.
 
@@ -1772,7 +1968,7 @@ contact would receive, for ten scenarios.
 
 ---
 
-## 12. Security
+## 13. Security
 
 - The booking key lives **only** in HubSpot workflow **Secrets**. It never goes in
   Aloware, in code or in chat.
