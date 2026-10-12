@@ -999,7 +999,7 @@ opens, with **Close** and **Save** at the top.
 | Field | Value |
 |---|---|
 | **Function name** *(255 chars)* | `request_booking` |
-| **Function description** *(the counter says 255, but only the first 191 characters are saved)* | `Submits a booking request once the contact has given a day and rough time of day. Use only after they've agreed to a call.` (Section 7h replaces this with a version that also fixes the reply after booking.) |
+| **Function description** *(re-open the function after saving and check the whole text was kept)* | `Submits a booking request once the contact has given a day and rough time of day. Use only after they've agreed to a call.` (Section 7h replaces this with a version that also fixes the reply after booking.) |
 | **Reply to the contact during execution?** | **Off**. The webhook answers in about 120 ms, so nobody notices a pause on SMS. |
 | **Reply to the contact after execution?** | **On**, so the agent confirms it's locking it in |
 
@@ -1402,6 +1402,13 @@ something known-working to compare against, then delete it.
 4. **Decide on follow-ups.** The text agent's **Actions → Enable Follow Up** sends
    automatic nudges to contacts who go quiet. If you turn it on, set the number and
    timing deliberately. Nudges a few minutes apart read as pushy.
+
+   > ⚠️ **Follow Up has no send window.** Each nudge goes out exactly one delay after
+   > the last message, at any hour. Nudges are marketing texts, and US rules limit
+   > those to 8 AM to 9 PM in the contact's local time (some states: 8 AM to 8 PM).
+   > Either keep the agent's whole schedule inside those hours, which also stops
+   > its replies at night, or turn Follow Up off and nudge from a sequence that has
+   > a send window.
 5. During the first day, check:
    - the HubSpot workflow's **Enrollment history** (use **More filters** to find
      failed runs), and the **Return value** of a sample of runs
@@ -1923,7 +1930,7 @@ after execution?** on) is written from the **function description**, not from th
 agent's instructions. Telling it to "send the line from your instructions" produced
 *"Booked - you'll receive a confirmation shortly."*, which claims a booking that
 hasn't happened yet. Put the exact line in the description, scoped to right after
-it runs, and keep it under 191 characters. This one is 183:
+it runs. Keep it short; this one is 183 characters:
 
 ```text
 Submits the booking once they agree to a call and give a day. Right after it runs, your next text is exactly: Got it, I put in the request! You'll get a confirmation text in a minute.
@@ -2039,13 +2046,17 @@ All of these were verified against a live portal. There's more detail in
 - **One-word names get "-" as the last name.** HubSpot's booking call refuses a
   blank last name, so the code sends "-", and HubSpot writes it to the contact. Fix
   it on the contact later, or have the agent ask for a full name.
-- **Custom function descriptions keep only 191 characters,** although the counter
-  says 255. The rest is cut mid-word without a warning. Re-open the function after
-  saving and read what was kept.
-- **AloAi agents can stall account-wide.** In testing, every text agent on the
-  account (including a brand-new one-line agent) enrolled contacts and never
-  replied for about an hour, then recovered on its own. Before changing your agent's
-  settings, text a minimal test agent on a truly unused line. Don't trust "Dead
+- **Check that a custom function description saved in full.** For a while Aloware
+  kept only the first 191 characters and cut the rest mid-word without a warning.
+  Aloware support says this was a bug and the limit is now 950. Re-open the
+  function after saving and read what was kept.
+- **Agent replies wait behind bulk sends.** In testing, every text agent on the
+  account (including a brand-new one-line agent) enrolled contacts and didn't reply
+  for about an hour. Aloware support traced it to the send queue: a large bulk text
+  sent from a HubSpot workflow at the same time had backed up the account's
+  outgoing messages, and agent replies waited behind it. If an agent goes silent,
+  check for a big send first, then text a minimal test agent on a truly unused line
+  before changing your agent's settings. Don't trust "Dead
   End" on the Lines page as "unused": a line can show that and still receive texts.
 - **Aloware text agent behavior seen while testing:**
   - **Disenroll doesn't stick for an inbound agent.** A disenrolled contact is
@@ -2055,6 +2066,15 @@ All of these were verified against a live portal. There's more detail in
     due while it's closed are skipped.
   - **One follow-up delay applies to every attempt.** You can't set a quick first
     nudge and a longer second one.
+  - **Follow-ups have no send window.** A nudge goes out exactly one delay after
+    the last message, so a chat that went quiet at 11:30 PM gets its nudge at
+    11:30 PM the next night. The schedule is the only hours control, and it also
+    stops the agent's replies. To keep nudges inside lawful texting hours while the
+    agent answers around the clock, turn Follow Up off and send nudges from a
+    sequence with its own send window.
+  - **"Stay quiet once a rep has texted" doesn't work as an instruction.** If your
+    reps text from the same line the agent answers, the agent replies inside their
+    conversations. Give the agent a line reps don't use.
   - **A conversation keeps the instructions it started with.** Edits reach new
     conversations only.
 - **Voice is the weaker channel.** HubSpot Meetings needs an email, and a voice
