@@ -74,8 +74,10 @@ and any reminder sequences you already run on meetings fire as normal.
                               │
                               ▼
                    HubSpot custom code action  ── src/booking-action.js
+                     0. guards: is the team already working this contact?
+                        (yes ─▶ handed_to_owner, task for the owner)
                      1. GET  availability for the meeting link
-                     2. pick the opening closest to the request
+                     2. book the exact time asked for, or the closest match
                      3. POST book, through the Meetings API
                               │
                               ▼
@@ -90,24 +92,31 @@ and any reminder sequences you already run on meetings fire as normal.
 
 Step by step:
 
-1. **The agent collects four things:** first name, email, a day, and a rough time
-   of day. It converts the day to `YYYY-MM-DD` and the time to `morning`,
-   `afternoon` or `evening`. It never picks an exact time, because it can't see
-   the calendar.
+1. **The agent collects four things:** first name, email, a day, and a time. It
+   converts the day to `YYYY-MM-DD`, and the time to an exact `HH:MM` (`18:00`)
+   if the contact named one, or to `morning`, `afternoon` or `evening`. It never
+   says a time is open, because it can't see the calendar.
 2. **The agent calls the Custom Function `request_booking`**, which POSTs that
    JSON to a HubSpot workflow's webhook URL.
 3. **HubSpot enrolls the matching contact** and runs the custom code action.
-4. **The action reads live availability** for the meeting link. By this point
+4. **The action checks whether your team is already working the contact:** an
+   upcoming meeting or task, a rep text in the last 12 hours, or an owner who
+   isn't on the link. If so it books nothing and hands the contact to the owner
+   (`handed_to_owner`).
+5. **The action reads live availability** for the meeting link. By this point
    HubSpot has already applied every rule on the link (working hours, minimum
    notice, buffer, booking window, duration) and every rep's busy blocks. The
-   action adds no rules of its own.
-5. **It picks the best match, working outward:**
+   action never books outside what HubSpot returned; it only prefers daytime
+   openings when it has to choose for the contact (Step 6b).
+6. **It picks the best match.** An exact time is booked only at that time; if
+   it's taken, the three closest open times are offered. Otherwise it works
+   outward:
    - the requested day in the requested period
    - then the requested day at any time
    - then the next day with something in that period
    - then it offers three alternatives on three different days.
-6. **It books through the HubSpot Meetings API** using the link's own duration.
-7. **It returns `booking_status`**, which the workflow branches on, and
+7. **It books through the HubSpot Meetings API** using the link's own duration.
+8. **It returns `booking_status`**, which the workflow branches on, and
    **`confirmation_text`**, a reply under 160 characters that's ready to text
    back on every branch.
 
@@ -172,11 +181,12 @@ an integration that has to write meeting types back into HubSpot.
 
 ```
 src/
-  booking-action.js           HubSpot custom code action: reads availability, books, returns a status
+  booking-action.js           HubSpot custom code action: checks the guards, reads availability, books, returns a status
   refresh-slots-action.js     Optional: writes the open times (next 3, plus a two-week table) to a CRM record the agent can read
   booking-relay-action.js     Optional: turns the agent's flat JSON into a HubSpot form submission, so new contacts can book
 test/
   booking-action.test.mjs     Offline tests with HubSpot stubbed; every branch
+  booking-guards.test.mjs     The three guards, including the agent's own replies and team blasts
   refresh-slots-action.test.mjs
   booking-relay-action.test.mjs
 examples/
@@ -442,12 +452,13 @@ the assigned rep's calendar. Note which rep got it.
    **Integrations** and click **Service Keys**. *Older portals call these*
    **Private Apps**, and HubSpot's legacy-app screen now recommends service keys.
 2. Create a new service key and name it `AI Booking Bridge`.
-3. Add **both** of these scopes before saving:
+3. Add these scopes before saving:
 
    | Scope | Why |
    |---|---|
    | `scheduler.meetings.meeting-link.read` | Read the link, its form and its availability |
    | `crm.objects.contacts.write` | **Required to book.** Booking creates or updates the contact. |
+   | `conversations.read` | Optional. Lets the code see whether a rep texted the contact recently (Step 6, guard 2). Without it that one check is skipped and every booking says so in `checks_note`. |
 
 4. Save. On the key's page (it has a **Back to all Service Keys** link at the top),
    find the **Service Key** box (*"Used to make API calls."*). The key shows
@@ -467,8 +478,8 @@ the assigned rep's calendar. Note which rep got it.
 > key is roughly 45 characters: `pat-na1-` followed by a long id with no dots or
 > asterisks.
 
-✅ **Check:** the **Scopes** box on the key's page lists both scopes, and your
-scratch note holds the full key.
+✅ **Check:** the **Scopes** box on the key's page lists the scopes you added, and
+your scratch note holds the full key.
 
 ### Step 5: Probe your portal before writing anything
 
@@ -558,25 +569,98 @@ const MEETING_SLUG = 'your-team/ai-booked-call';
 
 // Used only when neither the contact nor the agent supplies a valid timezone
 const DEFAULT_TZ = 'America/New_York';
-
-// Mirror your link's form (Step 3h / probe section 3).
-// Name and email are always sent. List only EXTRA fields here.
-const FORM_FIELDS = [
-  // { name: 'phone', required: true },   // uncomment if your form requires phone
-];
 ```
 
-Also check the time-of-day windows. They're local hours, and the end hour is
-excluded:
+You don't list the link's form fields anywhere. The code reads the link's form on
+every run and sends only the fields it has: `phone` goes along only when the form
+has a phone field, and the contact is asked for one only when that field is
+required.
+
+> ⚠️ **Never send a field the form doesn't have.** An earlier version kept a
+> hand-written copy of the form in the code. When the team moved the agent to a
+> different link with no phone field, every booking failed with *"formFields
+> contains invalid name(s)"*. Reading the form live removes that whole class of
+> mistake.
+
+**6a. The guards.** Before booking, the code checks whether your team is already
+working the contact. If any check is true it books nothing, returns
+`handed_to_owner`, and the workflow creates a task for the owner (Step 9):
+
+| Guard | Stops the booking when | Setting |
+|---|---|---|
+| 1. Upcoming activity | The contact's **Next activity date** is in the future: a meeting, a call or a task a rep already set | none |
+| 2. Recent rep text | A rep texted the contact in the last `REP_ACTIVE_HOURS` (12) hours on the HubSpot inbox channel your Aloware texts sync into | `ALOWARE_SMS_CHANNEL_ID`, `NOT_A_REP_ACTOR_IDS` |
+| 3. Owner off the round robin | The contact has an owner who is not a member of the link. "Prioritize contact owner" can only route to members, so the call would go to someone else | `ROUND_ROBIN_OWNER_IDS` |
+
+Fill in the three settings:
 
 ```js
+// Owner ids of every rep on the meeting link (the "id" from GET /crm/v3/owners).
+const ROUND_ROBIN_OWNER_IDS = new Set([
+  'REPLACE_WITH_OWNER_ID_1',
+  'REPLACE_WITH_OWNER_ID_2',
+]);
+
+// The HubSpot inbox channel your Aloware texts sync into.
+const ALOWARE_SMS_CHANNEL_ID = 'REPLACE_WITH_CHANNEL_ID';
+
+// People on that channel who are not a rep working the contact, e.g. a shared
+// team user that blasts go out as: 'A-<user id>'.
+const NOT_A_REP_ACTOR_IDS = new Set([]);
+```
+
+1. **Owner ids.** Call `GET https://api.hubapi.com/crm/v3/owners` with a key that
+   has the `crm.objects.owners.read` scope, and copy the `id` of each rep on the
+   link. Use `id`, not `userId`: they're different numbers, and the probe's
+   *POOL MEMBERS* list shows `userId`.
+2. **Channel id.** Open any contact who has texted with your team, find their
+   conversation thread with `GET
+   https://api.hubapi.com/conversations/v3/conversations/threads?associatedContactId=<contact id>`,
+   and copy the thread's `originalChannelId`.
+3. **Shared team user.** If blasts go out under one shared Aloware user, read a
+   blast message in that thread
+   (`.../conversations/threads/<thread id>/messages`) and add its sender
+   `actorId` (`A-` followed by a number) to `NOT_A_REP_ACTOR_IDS`. Otherwise leave
+   the set empty.
+
+> ⚠️ **Count rep messages, not thread activity.** The agent's own replies, workflow
+> texts and blasts sync into the same channel with sender `X-unknown`. A first
+> version of guard 2 read the thread's "last message" time, which moves every time
+> the agent replies. It handed every ordinary booking back to a rep as "texted 0
+> minutes ago". The code now reads the messages and counts only outgoing ones from
+> a person (`A-<id>`).
+
+> ⚠️ **Keep `ROUND_ROBIN_OWNER_IDS` in step with the link.** A rep added to the link
+> but not to this list gets their own contacts handed back as tasks instead of
+> booked.
+
+**6b. Hours.** Three settings decide what times the code books and offers. All are
+local hours in the contact's timezone, and the end hour is excluded:
+
+```js
+// When the agent may book. Default: every day, every hour the link offers.
+const AGENT_HOURS = { days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], from: 0, to: 24 };
+
+// If the requested part of the day is full, fall back to openings from this hour.
+const FALLBACK_FROM_HOUR = 9;
+
+// Alternatives offered when the requested time isn't open.
+const OFFER_HOURS = { from: 9, to: 21 };
+
 const PERIODS = {
-  morning:   [0, 12],
+  morning:   [9, 12],
   afternoon: [12, 17],
   evening:   [17, 24],
   any:       [0, 24],
 };
 ```
+
+> ⚠️ **A 24/7 link really offers 3 AM.** If your reps don't block nights on their
+> calendars, a free calendar at 3 AM is a bookable 3 AM. `FALLBACK_FROM_HOUR` and
+> `OFFER_HOURS` keep the code from proposing those, and morning starts at 9 for the
+> same reason. A time the contact names exactly (`preferred_period` = `18:00`) is
+> booked at that time or not at all. If it's taken, the three closest open times
+> are offered instead.
 
 If probe section 1 showed only `/v3/` answering, also change `SCHEDULER` to
 `'/scheduler/v3/meetings/meeting-links'`.
@@ -585,17 +669,9 @@ If you plan to build the optional section 6, make the same `MEETING_SLUG`,
 `DEFAULT_TZ`, `PERIODS` and `SCHEDULER` changes in [`src/refresh-slots-action.js`](src/refresh-slots-action.js)
 now, so the two files can't drift.
 
-> ⚠️ **Match `FORM_FIELDS` to the form exactly, in both directions.** A required
-> field you don't send is rejected with *"required form field phone does not have
-> a corresponding value"*. A field the form doesn't have can also be rejected. If
-> `FORM_FIELDS` requires phone and no number is available, the action doesn't fail
-> the booking. It returns `needs_phone` and asks the contact for one. But if the
-> form *doesn't* need phone and you leave it required here, **every** booking
-> stops at `needs_phone`. That happened when the original build moved to a second
-> link that only asked for name and email.
-
 ✅ **Check:** if you have Node 20, run `npm test`. It should print
-`all checks passed` twice.
+`all checks passed` for the booking, refresh and relay tests, and
+`guards: 13 checks passed`.
 
 ### Step 7: Build the HubSpot workflow and webhook trigger
 
@@ -774,6 +850,9 @@ needs to be defined in your code."*), add one row per input:
 | `preferred_period` | your webhook's group | `preferred_period` |
 | `timezone` | **Enrolled contact** | *IP Timezone* |
 | `timezone_agent` | your webhook's group | `timezone` |
+| `contact_id` | **Enrolled contact** | *Record ID* |
+| `owner_id` | **Enrolled contact** | *Contact owner* |
+| `next_activity` | **Enrolled contact** | *Next activity date* |
 
 Why these sources:
 - `email` and `last_name` come from the record because the trigger already matched
@@ -788,6 +867,9 @@ Why these sources:
   code prefers the contact's, then the agent's, then `DEFAULT_TZ`.
 - `preferred_date` and `preferred_period` are what the contact just said, so they
   must come from the webhook.
+- `contact_id`, `owner_id` and `next_activity` feed the three guards (Step 6a). Map
+  every input as a string. If one is missing, that guard simply has nothing to
+  check.
 
 > ⚠️ **Two "Phone Number" tokens.** Searching `phone` also shows a company's
 > *Phone Number*. Hover the chip after you pick it and make sure it says Enrolled
@@ -821,6 +903,7 @@ the type from the dropdown and typing the name:
 | Output | Type |
 |---|---|
 | `booking_status` | String |
+| `checks_note` | String |
 | `confirmation_text` | String |
 | `booking_label` | String |
 | `alternatives_text` | String |
@@ -884,9 +967,10 @@ order:
 | You got | Cause | Fix |
 |---|---|---|
 | `slot_taken` with `alternatives_text` | Your `preferred_date` is outside the booking window, or that day is full | Use a date inside the window with openings. This is the "offer three real times" path working. |
-| `error`, *"required form field phone does not have a corresponding value"* | `phone` is blank: the test contact has no number, or the row is mapped to a webhook field the agent never sends | Map `phone` to **Enrolled contact → Phone Number** (8c), or fix `FORM_FIELDS` (Step 6) |
+| `error`, *"required form field phone does not have a corresponding value"* | `phone` is blank: the test contact has no number, or the row is mapped to a webhook field the agent never sends | Map `phone` to **Enrolled contact → Phone Number** (8c) |
 | `needs_phone` | Same, caught before calling HubSpot | Same |
 | `error` naming `HUBSPOT_BOOKING_TOKEN` | Secret not ticked, or named differently | 8b |
+| `handed_to_owner` | A guard fired: the test contact has an upcoming activity, a recent rep text, or an owner who isn't on the link. `error_detail` says which. | Use a test contact with no owner and nothing scheduled |
 | `error` with **401** or **403** | Key wrong, or write scope missing | Step 4 |
 | `not_scheduled` | The rep the round robin picked has an offline calendar. Nothing was booked. | Run the probe (Step 5) and fix the pool |
 
@@ -910,6 +994,7 @@ turn it off again now.
 
 | `booking_status` | What happened | Actions to add |
 |---|---|---|
+| `handed_to_owner` | A guard stopped the booking: the team is already working the contact (Step 6a) | **Create task** for the **contact owner**, due today, with `error_detail` in the body: "The AI agent stopped a booking because: …". **Aloware → Send a text (SMS/MMS)** with `confirmation_text`, which tells the contact their advisor will confirm a time. Don't disenroll them. |
 | `booked` | A real meeting exists, with a calendar event | **Aloware → Disenroll from all sequences**, so a booked lead stops getting chased. Optionally, **Set property** for reporting. If you build section 6, add the refresh action here too. |
 | `slot_taken` | Nothing matched the request, or the slot went mid-booking | **Aloware → Send a text (SMS/MMS)** with the message body set to the output **`confirmation_text`**. It already offers three real times. |
 | `needs_email` | No email address on file | **Aloware → Send a text (SMS/MMS)** with `confirmation_text`. It asks for the email. |
@@ -938,7 +1023,7 @@ sequence** with a sequence that sends the same message.
    choose *not* to enroll them: webhook workflows only enroll when an event
    arrives.
 
-✅ **Check:** the workflow header reads **ON**, and the branch shows all seven
+✅ **Check:** the workflow header reads **ON**, and the branch shows all eight
 values plus the fallback.
 
 **How to read a run** (you'll use this in every test from here on):
@@ -1014,7 +1099,7 @@ reads them at the moment it fills each value.
 | `email` | `The contact's email address. Ask for it if you don't already have it — over text they can type it accurately.` | String | **Yes** |
 | `first_name` | `The contact's first name.` | String | No |
 | `preferred_date` | `The day they want, as YYYY-MM-DD. Resolve "tomorrow", "next Tuesday" and similar using today's date.` | String | **Yes** |
-| `preferred_period` | `Rough time of day: morning or afternoon. Never evening.` (match your calendar's hours) | String | No |
+| `preferred_period` | `The exact time in 24-hour HH:MM if they gave one (6 PM is 18:00), otherwise morning, afternoon or evening.` | String | No |
 | `timezone` | `IANA timezone such as America/New_York, if known. Omit if unsure.` | String | No |
 
 `email` is required because HubSpot matches on it. Without it the workflow enrolls
@@ -1230,29 +1315,40 @@ When the contact wants to book a call:
 1. Make sure you have their first name and email address. Ask for
    whichever is missing — over text people type an email accurately,
    so there is no reason to skip it.
-2. Ask which day works and roughly what time of day.
+2. Ask which day and what time works for them.
 3. Convert their answer to a calendar date in YYYY-MM-DD format,
    using today's date to resolve "tomorrow", "next Tuesday" and the
-   like. Map their answer to morning or afternoon.
+   like. For preferred_period, send the exact time in 24-hour HH:MM
+   if they gave one (6 PM is 18:00, 9:30 AM is 09:30). If they only
+   gave a part of the day, send morning, afternoon or evening.
 4. Use the request_booking function to submit the booking. Do not
    skip this step. Everything after it depends on it having run.
 5. Tell them you are locking it in and the confirmation will arrive
    by text and email shortly.
 
-Never state a specific appointment time as confirmed. You do not
-know which slot was taken until the confirmation goes out. If they
-press for the exact time, say the confirmation will state it.
+Never state a specific appointment time as confirmed, and never tell
+someone a time is open or available, or agree that a time works. You
+cannot see the calendar. If they ask whether a time is open, say "Let
+me put in the request for that time. You'll get a text confirming it
+in a minute." Only the booking system's text confirms what was booked.
 
-Only offer morning or afternoon. Never offer evening — the calendar
-runs 9 to 5, so an evening slot can never be booked.
+If the booking system texts back three other times and they pick one,
+call request_booking again with the date and the exact time they
+picked, exactly as offered ("Tue Sep 8 at 6:00 PM" is 2026-09-08 and
+18:00), not a new calculation from today.
+
+If a "You're all set for..." text, or your calendar's own booking
+confirmation or reminder, is already in the conversation, they are
+booked. Do not book again. If they ask when the call is, repeat the
+time from that text.
 
 You cannot see the calendar and cannot list specific available times.
 If they ask what times are available, say so plainly and move forward.
-Never re-ask for a time of day without acknowledging that you couldn't
-answer their question. Say something like: "I don't have the live
-calendar in front of me, but if you send me a day plus morning or
-afternoon, I'll book the closest opening and the confirmation will
-come by email. You can always reschedule from the invite if needed."
+Never re-ask for a time without acknowledging that you couldn't answer
+their question. Say something like: "I don't have the live calendar in
+front of me, but if you send me a day and a time, I'll put in the
+request and you'll get a confirmation by text. You can always
+reschedule from the invite if needed."
 
 You must call request_booking before telling the contact anything is
 booked or being booked. Never say you have booked, will book, or are
@@ -1302,6 +1398,20 @@ confirm shortly instead.
 time" and "You must call request_booking before…". Without the first, the agent
 makes a time up. Without the second, a wiring mistake produces a perfect
 conversation, a happy contact, and no meeting.
+
+> ⚠️ **"Yes, 6 PM is open" is a promise the agent can't keep.** In production a
+> contact asked for 6 PM, the agent replied that 6 PM was available, and its
+> request reached the booking code with no time at all (see the relay note in
+> section 7). The code booked the first opening of the day, and the contact
+> booked themselves by hand. Two fixes came out of it: the agent passes the exact
+> time as `18:00`, and it never says a time is open. The booking code books that
+> exact time or offers the three closest.
+
+> ⚠️ **Tell the agent what your other booking texts look like.** If contacts can
+> also book through the public link, your calendar sends its own confirmation and
+> reminder texts. An agent that doesn't recognize them will offer to book a
+> contact who already has a call. Name those texts in the "already booked"
+> paragraph, word for word.
 
 **11b. Insert the function chip (text agent).** Writing `request_booking` in the
 prompt isn't enough. The model has to see the actual function.
@@ -1439,8 +1549,9 @@ nothing is booked, and there's no half-finished state to clean up.
 4. Run the read-only probe on the new slug (Step 5b). Confirm the pool, `calendar
    OK` for every rep, and `formFields`.
 5. Update `MEETING_SLUG` in [`src/booking-action.js`](src/booking-action.js) (and in
-   [`src/refresh-slots-action.js`](src/refresh-slots-action.js) if you built section 6). Update `FORM_FIELDS` to
-   match the new form (Step 6). Run `npm test`.
+   [`src/refresh-slots-action.js`](src/refresh-slots-action.js) if you built section 6). Update `ROUND_ROBIN_OWNER_IDS` to the
+   new link's reps (Step 6a). The form fields are read live, so nothing else
+   changes. Run `npm test`.
 6. In HubSpot, open the custom code action, select all in the code editor and paste
    the **whole** updated file. **Save**, then **Review and update** the workflow
    (wording may differ).
@@ -1465,6 +1576,15 @@ it has nothing real to say.
 |---|---|---|---|
 | **Step 9 branches** (needed anyway) | ✅ texted back via `slot_taken` | ✗ | ✗ |
 | **This cache** | ✅ | ✅ | ✅ |
+
+> ⚠️ **The cache is a snapshot, and it goes stale.** A daily schedule refreshes it
+> once, in the early morning. By evening, the "next three openings" can be times
+> that have already passed or that a rep has since filled, and the agent offers
+> them as if they were open. That happened in production, and the agent was told
+> to stop using the cache: it now asks for a day and an exact time and lets the
+> booking code check the live calendar (Step 11). If you build the cache, refresh
+> it after every booking (6c step 10), and still never let the agent promise a time
+> from it.
 
 **Why a cache:** the webhook trigger returns `202` with no data, so the agent can't
 get an answer back from the workflow mid-conversation. Instead, a second action
@@ -1712,7 +1832,7 @@ Properties**, choose **Contact properties** and click **Create property** for ea
 | Internal name | Field type | Holds |
 |---|---|---|
 | `aloai_preferred_date` | Single-line text | `YYYY-MM-DD` |
-| `aloai_preferred_period` | Single-line text | `morning` or `afternoon` |
+| `aloai_preferred_period` | Single-line text | `18:00`, `morning`, `afternoon`, `evening` or `any` |
 | `aloai_booking_timezone` | Single-line text | An IANA zone, e.g. `America/New_York` |
 
 > ⚠️ **Single-line text, not Date.** Same trap as Step 7d: a Date property
@@ -1868,6 +1988,18 @@ webhook without a record.
    | `PORTAL_ID` | Your portal id from 7b |
    | `FORM_GUID` | Your form's GUID from 7b |
 
+   The relay turns whatever the agent sent for `preferred_period` into a value the
+   booking code reads: an exact time as 24-hour `HH:MM` (`"6 PM"`, `"6:00 PM"`,
+   `"6pm"` and `"18:00"` all become `18:00`, `"noon"` becomes `12:00`), or
+   `morning`, `afternoon` or `evening`, or `any` when nothing usable came through.
+
+   > ⚠️ **Always send a period.** A first version of the relay knew only morning
+   > and afternoon and returned an empty value for anything else. The relay never
+   > sends empty fields (they would blank the contact), so an "evening" or "6 PM"
+   > request left the contact's *older* period in place, and the booking code
+   > booked the first opening of the day. The relay now always sends a value, so
+   > every request overwrites the last one.
+
 10. **Data outputs:** **Add output** three times:
 
     | Type | Name |
@@ -1957,20 +2089,24 @@ confirmation text arrives. Cancel the test meeting afterwards.
 | `first_name` | Yes | Webhook | If it holds a full name and `last_name` is empty, the name is split |
 | `last_name` | No | Contact **Last Name** | Sent as `-` if empty, because HubSpot rejects blank last names |
 | `preferred_date` | No | Webhook | `YYYY-MM-DD`. If missing, the first opening in the preferred period is used. |
-| `preferred_period` | No | Webhook | `morning`, `afternoon`, `evening` or `any` (default `any`) |
+| `preferred_period` | No | Webhook | An exact time `HH:MM` (24-hour), or `morning`, `afternoon`, `evening` or `any` (default `any`). An exact time is booked only at that time. |
 | `timezone` | No | Contact **IP Timezone** | HubSpot's slug form, like `america_slash_chicago`, is converted automatically |
 | `timezone_agent` | No | Webhook | An IANA fallback |
 | `phone` | If the form needs it | Contact **Phone number** | US numbers are normalized to E.164 |
 | `phone_agent` | No | Webhook | Fallback only |
 | `duration_ms` | No | — | Only if the link offers several lengths |
 | `consent_type_id`, `consented` | Only if consent is required | — | Consent is recorded only if `consented` is literally true |
-| `extra_form_fields` | No | — | `{ "fieldName": "value" }` for other required form fields |
+| `extra_form_fields` | No | — | `{ "fieldName": "value" }` for other form fields. Fields the link's form doesn't have are dropped. |
+| `contact_id` | No | Contact **Record ID** | Guard 2: finds the contact's text threads |
+| `owner_id` | No | Contact **Contact owner** | Guard 3: owner must be on the round robin |
+| `next_activity` | No | Contact **Next activity date** | Guard 1: a future date stops the booking |
 
 ### Outputs
 
 | Output | When present | Example |
 |---|---|---|
 | `booking_status` | Always | `booked` |
+| `checks_note` | Every run that reached the guards | `next_activity none; no rep text in the last 12 h; owner 1234567 on round robin` |
 | `confirmation_text` | Always | `You're all set for Tue Sep 8 at 2:00 PM EDT. Invite headed to alex@example.com.` |
 | `booking_label` | `booked`, `not_scheduled` | `Tuesday, September 8 at 2:00 PM EDT` |
 | `booked_start_ms` | `booked`, `not_scheduled` | `1788890400000` |
@@ -1979,7 +2115,7 @@ confirmation text arrives. Cancel the test meeting afterwards.
 | `calendar_event_id` | `booked` only | Proof a real event exists |
 | `booked_contact_id` | `booked`, `not_scheduled` | The contact HubSpot booked |
 | `payload_shape` | `booked`, `not_scheduled` | `legacy-millis` |
-| `error_detail` | Failure branches | The raw HubSpot error, truncated to 500 characters |
+| `error_detail` | Failure branches and `handed_to_owner` | The raw HubSpot error (truncated to 500 characters), or which guard stopped the booking |
 
 ### Code settings
 
@@ -1987,8 +2123,14 @@ confirmation text arrives. Cancel the test meeting afterwards.
 |---|---|---|---|
 | `MEETING_SLUG` | both `src` files | `your-team/ai-booked-call` | Always. It's your link. |
 | `DEFAULT_TZ` | both | `America/New_York` | Your office isn't in US Eastern |
-| `FORM_FIELDS` | `booking-action.js` | empty | Your form requires more than name and email |
-| `PERIODS` | both | 0–12 / 12–17 / 17–24 (the refresh file has morning and afternoon only) | Your idea of "afternoon" differs. Keep the morning and afternoon windows the same in both files. |
+| `ROUND_ROBIN_OWNER_IDS` | `booking-action.js` | placeholders | Always. Every rep on the link (Step 6a). |
+| `ALOWARE_SMS_CHANNEL_ID` | `booking-action.js` | placeholder | Always, for guard 2 (Step 6a) |
+| `NOT_A_REP_ACTOR_IDS` | `booking-action.js` | empty | Blasts go out under a shared team user |
+| `REP_ACTIVE_HOURS` | `booking-action.js` | 12 | You want a shorter or longer hands-off window after a rep text |
+| `AGENT_HOURS` | `booking-action.js` | every day, 0–24 | You want bookings only on certain days or hours |
+| `FALLBACK_FROM_HOUR` | `booking-action.js` | 9 | Your earliest reasonable call isn't 9 AM |
+| `OFFER_HOURS` | `booking-action.js` | 9–21 | You want alternatives offered in a different band |
+| `PERIODS` | both | 9–12 / 12–17 / 17–24 (the refresh file has morning 0–12 and afternoon only) | Your idea of "afternoon" differs. Keep the windows the same in both files. |
 | `MAX_ALTS` / `OFFER_SLOTS` | `booking-action.js` / `refresh-slots-action.js` | 3 | You want more or fewer alternatives |
 | `SLOT_CACHE_TYPE` / `SLOT_CACHE_ID` | `refresh-slots-action.js` | placeholders | Always, if you build section 6. Secrets with the same names override them. |
 | `SCHEDULER` | both | `/scheduler/2026-03/...` | The probe shows only `/v3/` answering |
@@ -2024,13 +2166,30 @@ All of these were verified against a live portal. There's more detail in
    JavaScript's `Intl` until it's converted.
 9. **Date-typed webhook fields get reformatted.** Map everything as String.
 10. **Empty last names are rejected.**
-11. **Form fields must match the form exactly**, in both directions.
+11. **Form fields must match the form exactly**, in both directions. A field the
+    form doesn't have fails with *"formFields contains invalid name(s)"*. The code
+    reads the form live from `GET .../meeting-links/book/<slug>`
+    (`customParams.formFields`) for this reason.
 12. **Busy blocks carry start times too.** Code that grabs every `start` from the
     availability response will offer a rep's existing meeting as free.
 13. **The link's Meeting type reaches API bookings**, so no code has to stamp
     `hs_activity_type`.
 14. **API bookings get a video link** if one is attached to the page, even when
     the location is Phone Call.
+15. **A weighted rotation hides everyone else's calendar.** With a meeting
+    rotation set to weights, the availability endpoint shows only the openings of
+    the rep who is next in line. When that rep is busy, the link reads as full
+    even though others are free. Choosing reps with **Select users** instead
+    returns everyone's openings.
+16. **The booking window can be just a few days.** A rolling window of 3 days
+    means "next Tuesday" has no openings at all, and every such request comes
+    back `slot_taken`. Widen the window on the link if contacts plan further out.
+17. **A conversation thread's last-message time moves on every bot reply.** Use
+    the messages and their senders (`A-<id>` is a person, `X-unknown` is an
+    agent, workflow or blast), not the thread's timestamp, to tell whether a
+    rep is talking to someone.
+18. **"Prioritize contact owner" only routes to link members.** A contact owned
+    by someone off the link silently goes to whoever is next.
 
 ---
 
@@ -2061,9 +2220,11 @@ All of these were verified against a live portal. There's more detail in
 - **Aloware text agent behavior seen while testing:**
   - **Disenroll doesn't stick for an inbound agent.** A disenrolled contact is
     enrolled again on their next text. There's no setting to stop it.
-  - **Texts that arrive while the agent's schedule is closed get no reply**, not
-    even when it reopens. The agent answers their next text. Follow-ups that fall
-    due while it's closed are skipped.
+  - **Texts that arrive while the agent's schedule is closed are queued**, and the
+    agent answers all of them when the schedule opens. A closed schedule delays the
+    agent; it doesn't keep it out of conversations. If reps text from the same line,
+    the agent replies inside their conversations at opening time. Follow-ups that
+    fall due while it's closed are skipped.
   - **One follow-up delay applies to every attempt.** You can't set a quick first
     nudge and a longer second one.
   - **Follow-ups have no send window.** A nudge goes out exactly one delay after
@@ -2105,7 +2266,11 @@ All of these were verified against a live portal. There's more detail in
 | `error` with **401** | Key wrong or truncated | Re-copy the full key from **Show → Copy** |
 | `error` with **403** | Missing write scope | Add `crm.objects.contacts.write` (Step 4) |
 | `error` with `MEETING_DURATION_NOT_VALID` | Payload shape changed | Re-run the probe's booking test, then check `book()` in the code |
-| `error` mentioning a *required form field* | `FORM_FIELDS` doesn't match the form | Step 6 |
+| `error` mentioning a *required form field* | The form requires a field the code had no value for | Map it, or pass it in `extra_form_fields` (section 8) |
+| Every booking comes back `handed_to_owner` | Guard 2 counts the agent's own replies, or a shared blast user | Check `ALOWARE_SMS_CHANNEL_ID` and add the blast user to `NOT_A_REP_ACTOR_IDS` (Step 6a). `error_detail` names the guard. |
+| Contacts owned by one rep never get booked | That rep's owner id isn't in `ROUND_ROBIN_OWNER_IDS` | Step 6a |
+| Booked at 9 AM when they asked for 6 PM | The exact time never reached the code: the agent sent a period, or an old relay dropped it | Steps 10A and 11, and the relay note in 7f |
+| Agent offers times that have already passed | It is reading a cache that refreshed hours ago | Section 6 warning |
 | `not_scheduled` | A pool rep's calendar is disconnected | Run the probe. Reconnect the calendar or remove the rep. |
 | Meeting has no Call and meeting type | The link's **Meeting type** isn't set | Step 3b |
 | Booked on the wrong day | `preferred_date` mapped as Date | Re-map as String (Step 7d) |
@@ -2138,7 +2303,11 @@ Runs [`examples/demo.mjs`](examples/demo.mjs).
 The tests stub HubSpot and **freeze the clock**, so they never go stale as their
 sample dates pass. They cover busy-block exclusion, the link's own duration,
 timezone slugs, the offline-booking failure, conflicts vs. configuration errors,
-consent, phone normalization, and the 160-character SMS ceiling on every reply.
+consent, phone normalization, the link's live form fields, 24/7 hours, exact
+times, every booking guard (upcoming activity, recent rep text past the first page
+of messages, the agent's own replies, team blasts, owners off the round robin, a
+missing scope), the relay's period handling, and the 160-character SMS ceiling
+on every reply.
 The demo prints what the agent sends, which HubSpot calls are made, and what the
 contact would receive, for ten scenarios.
 

@@ -27,7 +27,8 @@
  *
  * Inputs ("Property to include in code", each mapped from the webhook event):
  *   email (required), full_name, phone, preferred_date (YYYY-MM-DD, required),
- *   preferred_period (morning | afternoon), timezone (IANA, e.g. America/New_York)
+ *   preferred_period (an exact time "18:00", or morning | afternoon | evening),
+ *   timezone (IANA, e.g. America/New_York)
  *   full_name is split here: the first word is First Name, the rest is Last Name. A one-word
  *   name sends no Last Name, so an existing contact's last name is never blanked.
  *   first_name is still read as a fallback for anything posting the old shape.
@@ -134,12 +135,32 @@ function normalizePhone(raw) {
   return s.startsWith('+') ? '+' + digits : digits;
 }
 
-/** The booking code understands morning or afternoon only; anything else is left out. */
+/**
+ * What the booking code reads from aloai_preferred_period:
+ *   an exact time as 24-hour "HH:MM" ("18:00"), from "18:00", "6:00 PM", "6pm", "6 p.m.", "noon"
+ *   morning | afternoon | evening
+ *   any   (nothing usable given)
+ * Always returns a value. buildFields drops empty values, so a blank period would leave
+ * an older request's period on the contact and the booking code would reuse it.
+ */
 function normalizePeriod(raw) {
-  const s = clean(raw).toLowerCase();
+  const s = clean(raw).toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ');
+  if (!s) return 'any';
+  if (s === 'noon') return '12:00';
+
+  const t = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/.exec(s);
+  if (t && (t[2] !== undefined || t[3])) {
+    let h = Number(t[1]);
+    const min = Number(t[2] || 0);
+    if (t[3] === 'pm' && h < 12) h += 12;
+    if (t[3] === 'am' && h === 12) h = 0;
+    if (h <= 23 && min <= 59) return String(h).padStart(2, '0') + ':' + String(min).padStart(2, '0');
+  }
+
   if (s.startsWith('morn') || s === 'am') return 'morning';
   if (s.startsWith('after') || s === 'pm') return 'afternoon';
-  return '';
+  if (s.startsWith('even') || s.startsWith('night') || s === 'tonight') return 'evening';
+  return 'any';
 }
 
 // Exposed for the local test only; the workflow calls exports.main.

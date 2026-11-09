@@ -51,11 +51,14 @@ assert.equal(field('aloai_preferred_date'), '2026-10-14');
 assert.equal(field('aloai_preferred_period'), 'morning');
 assert.equal(field('aloai_booking_timezone'), 'America/New_York');
 
-/* empty optional values are not sent (they would blank the contact) */
+/* empty optional values are not sent (they would blank the contact); the period is
+   always sent so an older request's period is never reused */
 calls = [];
 out = await run({ email: 'a@example.com', preferred_date: '2026-10-15', preferred_period: 'evening' });
 assert.equal(out.submitted, true);
-assert.deepEqual(sent().fields.map(f => f.name).sort(), ['aloai_preferred_date', 'email']);
+assert.deepEqual(sent().fields.map(f => f.name).sort(),
+  ['aloai_preferred_date', 'aloai_preferred_period', 'email']);
+assert.equal(sent().fields.find(f => f.name === 'aloai_preferred_period').value, 'evening');
 
 /* refusals: no call made */
 calls = [];
@@ -97,6 +100,19 @@ assert.equal(T.normalizePhone('+15550100123'), '+15550100123');
 assert.equal(T.normalizePhone('5550100123'), '+15550100123');
 assert.equal(T.normalizePhone('+44 20 7946 0958'), '+442079460958');
 assert.equal(T.normalizePeriod('PM'), 'afternoon');
-assert.equal(T.normalizePeriod('evening'), '');
+// "evening" and exact times pass through, and blank sends 'any' so an older
+// request's period on the contact is always overwritten.
+assert.equal(T.normalizePeriod('evening'), 'evening');
+assert.equal(T.normalizePeriod('tonight'), 'evening');
+assert.equal(T.normalizePeriod('18:00'), '18:00');
+assert.equal(T.normalizePeriod('6:00 PM'), '18:00');
+assert.equal(T.normalizePeriod('6pm'), '18:00');
+assert.equal(T.normalizePeriod('6 p.m.'), '18:00');
+assert.equal(T.normalizePeriod('6:30pm'), '18:30');
+assert.equal(T.normalizePeriod('9:30'), '09:30');
+assert.equal(T.normalizePeriod('12 am'), '00:00');
+assert.equal(T.normalizePeriod('noon'), '12:00');
+assert.equal(T.normalizePeriod(''), 'any');
+assert.equal(T.normalizePeriod('whenever'), 'any');
 
 console.log('booking-relay-action: all checks passed');
